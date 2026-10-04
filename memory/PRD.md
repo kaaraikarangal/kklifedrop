@@ -32,8 +32,14 @@ Production-grade mobile blood donation + request platform (Expo + FastAPI + Mong
 - Email: `EMAIL_PROVIDER` env (resend/sendgrid/smtp) — mock.
 - Push: FCM stub.
 
+## Database (Production)
+- **Supabase Postgres** (live): `https://uurkvfeguglvcjqgcway.supabase.co` — service_role key in backend `.env`.
+- Schema: `/app/backend/supabase_migration.sql` (donors, otps, blood_requests, notifications, donor_responses, admin_users, audit_logs). RLS disabled; backend is the only writer via service key.
+- No demo data — production starts empty (admin seeded only).
+- 2026-10-04: migrated from MongoDB; fixed uuid-cast crash on `K2-BR-*` lookups (UUID-regex filter). 42/42 backend tests pass against Supabase.
+
 ## Deferred
 - Real SMS/Email/FCM wiring (requires user keys).
-- Supabase migration (user provided publishable key only; service_role needed).
+- Request-number generation is count-based (race risk at scale — consider a Postgres sequence + RPC).
 - Charts in admin analytics.
 - Localization.

@@ -1,0 +1,45 @@
+{
+  "summary": "Backend-only regression testing of K2 Life Drop after MongoDB -> Supabase (Postgres) migration. Rewrote /app/backend/tests/test_k2_life_drop.py to be fully self-contained (no reliance on removed demo seed data; unique uuid-suffixed area/district names per run). 42 tests, ALL PASS against https://drop-portal-1.preview.emergentagent.com/api: OTP send (dev_otp) + verify JWT + rate limit 429 + wrong OTP 400; donor registration with masked_aadhaar in response and encrypted_aadhaar stored (verified by admin decrypt round-trip of a known 12-digit aadhaar); duplicate mobile -> 409; public GET /donors leaks no mobile/email/encrypted_aadhaar/_id; empty-list search returns 200 [] ; blood_group=B+ and search filters work; /donors/me GET+PATCH toggles persist; request numbering K2-BR-YYYYMMDD-NNN; CRITICAL REGRESSION VERIFIED: GET /blood-requests/{request_number} -> 200, by uuid -> 200, non-existent number K2-BR-20261004-999 -> clean 404 (not the old uuid-cast 500), garbage ref -> 404; admin login works; /admin/* rejects no-token (401) and user-JWT (403), admin blocked from /donors/me (403); /admin/stats delta-verified against exactly the 8 inserted donors (+8 total, +7 available, B+ +7, O+ +1, district bucket present); aadhaar reveal decrypts correctly AND writes reveal_aadhaar audit_logs row; matching-donors buckets same_area/same_district/other correct with ineligible donors excluded (recent donation <90d, Not Available, opt_in false) and wrong blood group excluded; notify creates notification rows idempotently (re-notify -> 0), sets status 'Donors Notified', writes notify_donors audit log; donor-response 'I Can Donate' -> 'Donor Found' with notification.response recorded; donor GET /notifications shows request details + response; admin /notifications groups per request (notified/responded/can_donate); PATCH status to Fulfilled works by BOTH uuid and request_number; admin suspend donor -> excluded from matching and from public active list. SMS/Email remain MOCKED (dev OTP in response).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/blood-requests", "issue": "gen_request_number() is count-based (count of today's requests + 1). Under concurrent creates two requests can get the same number -> unique-constraint 500. Low risk at current scale; consider a Postgres sequence or retry-on-conflict."},
+      {"endpoint": "all", "issue": "pytest.ini forces xdist (-n --dist loadscope). Session-scoped fixtures (world) are created once PER WORKER, doubling inserted data and breaking exact-count assertions like stats deltas. Must run with `-n 0`. Harness-level issue, not a backend bug."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_k2_life_drop.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "No blocking fixes needed - all 18 review items verified green on Supabase.",
+    "Optional: guard request-number generation against races (sequence/UPSERT retry).",
+    "Optional: split server.py (1009 lines) into modules (auth/donors/requests/admin).",
+    "Optional: run pytest with `-n 0` or remove xdist addopts from pytest.ini to avoid duplicate world fixtures in CI.",
+    "Optional: add TTL/cleanup job for otps table rows (grows unbounded in Postgres now)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1009 lines - exceeds the 700-line split guideline; recommend auth.py, donors.py, blood_requests.py, admin.py modules.",
+    "is_eligible() uses date.today() (server-local) vs UTC; prefer datetime.now(timezone.utc).date().",
+    "Fernet falls back to an ephemeral generated key if AADHAAR_FERNET_KEY is invalid - silent data-loss risk; should fail fast.",
+    "request_ref_filter() UUID-regex guard correctly fixes the Postgres uuid-cast crash; verified both lookup paths plus 404s for unknown refs.",
+    "DonorRegistrationIn.last_donation_date is an unvalidated string; invalid values are silently ignored by is_eligible's try/except (treats unparseable as eligible)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_k2_life_drop.py (rewritten: self-contained Supabase edition, 42 tests)",
+    "/app/memory/test_credentials.md (removed stale '8 demo donors seeded' note - DB is clean post-migration)"
+  ],
+  "success_rate": {"backend": "100% (42/42)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Created TEST_-prefixed data only: 8 donors per run (7x B+ across matching buckets incl. ineligible variants + 1x O+) and several blood requests/notifications. Two runs executed (xdist run + serial run) so ~16 extra donors exist from the aborted parallel run. No destructive cleanup performed; all names are uuid-suffixed so re-runs never collide.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "DB is Supabase Postgres, clean of demo seeds. Run: cd /app/backend && python -m pytest tests/test_k2_life_drop.py -n 0 -v (MUST use -n 0; pytest.ini addopts enable xdist which duplicates session fixtures). Admin: admin@k2lifedrop.com/Admin@123. OTP: any 10-digit mobile, dev_otp in response. The id-vs-request_number UUID-regex fix is verified working. Frontend was NOT tested this iteration.",
+  "rca_of_issue": "No active bugs found. Historical note: logs showed the pre-fix 500 on GET /blood-requests/K2-BR-20261004-001 (Postgres tried to cast request_number to uuid in an id-eq filter). The shipped fix (UUID_RE guard in request_ref_filter, server.py:92-99) resolves it - verified: request_number lookup 200, uuid lookup 200, unknown number 404, garbage string 404."
+}
