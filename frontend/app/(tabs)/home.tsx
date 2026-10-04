@@ -6,6 +6,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
+import { BrandLogo } from "@/src/components/BrandLogo";
 
 export default function Home() {
   const insets = useSafeAreaInsets();
@@ -36,10 +37,7 @@ export default function Home() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brandPrimary} />}
       >
         <View style={styles.header}>
-          <View>
-            <Text style={styles.hi}>Welcome back 👋</Text>
-            <Text style={styles.brand}>K2 Life Drop</Text>
-          </View>
+          <BrandLogo variant="horizontal" size="sm" />
           <Pressable style={styles.iconBtn} onPress={() => router.push("/(tabs)/notifications")} testID="header-notifications">
             <Ionicons name="notifications" size={20} color={colors.onSurface} />
           </Pressable>

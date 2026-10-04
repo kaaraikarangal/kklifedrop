@@ -9,39 +9,48 @@ export type ColorScheme = "light" | "dark";
 const light = {
   // Surfaces
   surface: "#FFFFFF",
-  onSurface: "#1C1C1E",
-  surfaceSecondary: "#F5F5F5",
-  onSurfaceSecondary: "#3A3A3C",
-  surfaceTertiary: "#EEEEEE",
-  onSurfaceTertiary: "#48484A",
-  surfaceInverse: "#1C1C1E",
+  onSurface: "#0F172A",
+  surfaceSecondary: "#F8FAFC",
+  onSurfaceSecondary: "#334155",
+  surfaceTertiary: "#F1F5F9",
+  onSurfaceTertiary: "#475569",
+  surfaceInverse: "#0F172A",
   onSurfaceInverse: "#FFFFFF",
-  muted: "#8E8E93",
+  muted: "#64748B",
 
-  // Brand (Blood Red)
-  brand: "#D32F2F",
+  // Brand Palette (Derived from KK Life Drop & Kaarai Karangal Identity)
+  brand: "#D31027", // Blood Ruby Red
   onBrand: "#FFFFFF",
-  brandPrimary: "#D32F2F",
+  brandPrimary: "#D31027",
   onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#E53935",
+  brandPrimaryDark: "#B30A1D",
+  brandPrimaryLight: "#FFF1F2",
+  brandSecondary: "#0052D4", // Ocean Blue (Care Hand)
   onBrandSecondary: "#FFFFFF",
-  brandTertiary: "#FFEBEE",
-  onBrandTertiary: "#D32F2F",
+  brandSecondaryLight: "#EFF6FF",
+  brandTertiary: "#00A859", // Emerald Green (Leaf of Hope)
+  onBrandTertiary: "#FFFFFF",
+  brandTertiaryLight: "#ECFDF5",
+
+  // Explicit color aliases
+  brandRed: "#D31027",
+  brandBlue: "#0052D4",
+  brandGreen: "#00A859",
 
   // Status
-  success: "#2E7D32",
+  success: "#00A859",
   onSuccess: "#FFFFFF",
-  warning: "#F57C00",
+  warning: "#EA580C",
   onWarning: "#FFFFFF",
-  error: "#D32F2F",
+  error: "#D31027",
   onError: "#FFFFFF",
-  info: "#616161",
+  info: "#0052D4",
   onInfo: "#FFFFFF",
 
-  // Lines
-  border: "#E5E5EA",
-  borderStrong: "#C7C7CC",
-  divider: "#E5E5EA",
+  // Lines & borders
+  border: "#E2E8F0",
+  borderStrong: "#CBD5E1",
+  divider: "#E2E8F0",
 };
 
 export type ThemeColors = typeof light;
@@ -75,7 +84,7 @@ setColorScheme?.(themes.dark ? null : defaultScheme);
 
 export function useTheme(): { scheme: ColorScheme; colors: ThemeColors } {
   const system = useColorScheme();
-  const scheme: ColorScheme = system && themes[system] ? system : defaultScheme;
+  const scheme: ColorScheme = (system === "light" || system === "dark") && themes[system] ? system : defaultScheme;
   return { scheme, colors: themes[scheme] ?? themes.light };
 }
 

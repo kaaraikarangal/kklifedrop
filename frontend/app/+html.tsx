@@ -12,6 +12,9 @@ export default function Root({ children }: PropsWithChildren) {
           name="viewport"
           content="width=device-width, initial-scale=1, shrink-to-fit=no"
         />
+        <title>KK Life Drop — Donate Blood, Save Lives | Kaarai Karangal</title>
+        <meta name="description" content="KK Life Drop is an official blood donation platform by Kaarai Karangal Samooga Sevai Amaippu. Connect donors and seekers in minutes." />
+        <meta name="theme-color" content="#D31027" />
         {/*
           Disable body scrolling on web to make ScrollView components work correctly.
           If you want to enable scrolling, remove `ScrollViewStyleReset` and
@@ -21,6 +24,8 @@ export default function Root({ children }: PropsWithChildren) {
         <style
           dangerouslySetInnerHTML={{
             __html: `
+              html, body { overflow-x: hidden !important; width: 100% !important; max-width: 100vw !important; }
+              #root { width: 100% !important; max-width: 100vw !important; overflow-x: hidden !important; }
               body > div:first-child { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; }
               [role="tablist"] [role="tab"] * { overflow: visible !important; }
               [role="heading"], [role="heading"] * { overflow: visible !important; }

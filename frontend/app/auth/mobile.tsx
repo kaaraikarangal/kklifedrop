@@ -8,6 +8,7 @@ import { api, setSession } from "@/src/api";
 import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
+import { BrandLogo } from "@/src/components/BrandLogo";
 
 export default function MobileAuth() {
   const insets = useSafeAreaInsets();
@@ -23,10 +24,14 @@ export default function MobileAuth() {
     try {
       const r: any = await api("/auth/send-otp", { body: { mobile } });
       setDevOtp(r.dev_otp || null);
+      if (r.dev_otp) {
+        toast("success", "OTP Generated", `Code: ${r.dev_otp}`);
+      } else {
+        toast("success", "OTP Sent", `Verification code sent to +91 ${mobile}`);
+      }
       setStep("otp");
-      toast("success", "OTP sent", r.dev_otp ? `Dev OTP: ${r.dev_otp}` : "Check your phone");
     } catch (e: any) {
-      toast("error", "Failed", e.message);
+      toast("error", "Failed to send OTP", e.message);
     } finally {
       setLoading(false);
     }
@@ -56,8 +61,10 @@ export default function MobileAuth() {
         <Pressable onPress={() => router.back()} style={styles.back} testID="back-btn">
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
         </Pressable>
-        <View style={styles.logoRound}><Ionicons name="water" size={28} color="#FFFFFF" /></View>
-        <Text style={styles.title}>Create Your{"\n"}K2 Life Drop Account</Text>
+        <View style={{ alignItems: "center", marginBottom: spacing.md }}>
+          <BrandLogo size="lg" variant="stacked" showSubtext />
+        </View>
+        <Text style={styles.title}>Mobile Verification</Text>
         <Text style={styles.sub}>
           {step === "mobile" ? "We'll send a one-time password to your mobile." : `Enter the 6-digit code sent to +91 ${mobile}`}
         </Text>
@@ -80,14 +87,16 @@ export default function MobileAuth() {
             <Input
               testID="otp-input"
               label="One-Time Password"
-              placeholder="------"
+              placeholder="Enter 6-digit code"
               value={otp}
               onChangeText={(t) => setOtp(t.replace(/\D/g, "").slice(0, 6))}
               keyboardType="number-pad"
               maxLength={6}
             />
             {devOtp ? (
-              <Text style={styles.devNote} testID="dev-otp-hint">Dev OTP: {devOtp}</Text>
+              <Pressable onPress={() => setOtp(devOtp)} style={styles.devNote} testID="dev-otp-hint">
+                <Text style={styles.devNoteText}>OTP Code: {devOtp} (Tap to autofill)</Text>
+              </Pressable>
             ) : null}
             <Button testID="verify-otp-btn" label="Verify & Continue" onPress={verify} loading={loading} />
             <Pressable onPress={() => setStep("mobile")} style={{ alignItems: "center", padding: 12 }}>
@@ -106,5 +115,6 @@ const styles = StyleSheet.create({
   logoRound: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", marginBottom: spacing.lg },
   title: { fontSize: 28, fontWeight: "800", color: colors.onSurface, letterSpacing: -0.8, marginBottom: 8 },
   sub: { fontSize: 14, color: colors.muted, marginBottom: spacing.xl, lineHeight: 20 },
-  devNote: { backgroundColor: colors.brandTertiary, color: colors.brandPrimary, padding: 10, borderRadius: radius.sm, textAlign: "center", marginBottom: 12, fontWeight: "600" },
+  devNote: { backgroundColor: colors.brandTertiary, padding: 10, borderRadius: radius.sm, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  devNoteText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 12 },
 });

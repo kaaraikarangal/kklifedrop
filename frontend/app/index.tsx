@@ -1,83 +1,372 @@
-import React, { useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Image } from "react-native";
+import React, { useEffect, useState, useRef } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Image,
+  Animated,
+  Easing,
+  Dimensions,
+  Platform,
+} from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
-import { api, getRole, getToken } from "@/src/api";
+import { getRole, getToken } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
+import { BrandLogo } from "@/src/components/BrandLogo";
 
-const HERO_IMG = "https://images.unsplash.com/photo-1615461066159-fea0960485d5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxibG9vZCUyMGRvbmF0aW9uJTIwZHJpdmUlMjBoZXJvfGVufDB8fHx8MTc5MTA5MDk2Mnww&ixlib=rb-4.1.0&q=85";
+const LOGO_FULL = require("@/assets/images/kk_life_drop_logo.png");
+const LOGO_SYMBOL = require("@/assets/images/kk_life_drop_symbol.png");
+const BANNER_IMG = require("@/assets/images/kaarai_karangal_banner.png");
 
 const GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
+const USE_NATIVE_DRIVER = Platform.OS !== "web";
+
 export default function Landing() {
   const insets = useSafeAreaInsets();
-  const [donors, setDonors] = React.useState<any[]>([]);
+  const [showSplash, setShowSplash] = useState(true);
+
+  // Splash Animation Values
+  const splashOpacity = useRef(new Animated.Value(1)).current;
+  const splashLogoScale = useRef(new Animated.Value(0.7)).current;
+  const splashLogoOpacity = useRef(new Animated.Value(0)).current;
+  const splashTextOpacity = useRef(new Animated.Value(0)).current;
+  const splashTextTranslate = useRef(new Animated.Value(20)).current;
+  const splashRingScale = useRef(new Animated.Value(0.8)).current;
+
+  // Main Page Micro-Animations
+  const heroFade = useRef(new Animated.Value(0)).current;
+  const heroTranslate = useRef(new Animated.Value(24)).current;
+  const pulseScale = useRef(new Animated.Value(1)).current;
+  const emergencyPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    // 1. Check existing session for auto-routing
     (async () => {
-      // auto-redirect if already signed in
       const t = await getToken();
       const role = await getRole();
       if (t && role === "admin") router.replace("/admin");
       else if (t && role === "user") router.replace("/(tabs)/home");
     })();
-    api("/donors?limit=5").then((r: any) => setDonors(r.donors || [])).catch(() => {});
+
+    // 2. Opening App Logo Splash Animation Sequence
+    Animated.sequence([
+      // First: Logo scale & fade in
+      Animated.parallel([
+        Animated.timing(splashLogoOpacity, {
+          toValue: 1,
+          duration: 450,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.spring(splashLogoScale, {
+          toValue: 1.05,
+          friction: 4,
+          tension: 40,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(splashRingScale, {
+          toValue: 1.3,
+          duration: 900,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]),
+      // Heartbeat pulse on logo
+      Animated.sequence([
+        Animated.timing(splashLogoScale, {
+          toValue: 1.12,
+          duration: 160,
+          easing: Easing.ease,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(splashLogoScale, {
+          toValue: 1.0,
+          duration: 200,
+          easing: Easing.ease,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]),
+      // Text fade & slide up
+      Animated.parallel([
+        Animated.timing(splashTextOpacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(splashTextTranslate, {
+          toValue: 0,
+          duration: 400,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ]),
+      // Pause to let the user admire the brand
+      Animated.delay(450),
+      // Fade out splash overlay gently
+      Animated.timing(splashOpacity, {
+        toValue: 0,
+        duration: 450,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start(() => {
+      setShowSplash(false);
+    });
+
+    // 3. Main Page Entrance Animation
+    Animated.parallel([
+      Animated.timing(heroFade, {
+        toValue: 1,
+        duration: 650,
+        delay: 300,
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+      Animated.timing(heroTranslate, {
+        toValue: 0,
+        duration: 650,
+        delay: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: USE_NATIVE_DRIVER,
+      }),
+    ]).start();
+
+    // 4. Continuous gentle heartbeat on the emblem
+    const heartBeatLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseScale, {
+          toValue: 1.06,
+          duration: 800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(pulseScale, {
+          toValue: 1.0,
+          duration: 800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ])
+    );
+    heartBeatLoop.start();
+
+    // 5. Emergency icon subtle pulse
+    const emergencyLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(emergencyPulse, {
+          toValue: 1.15,
+          duration: 600,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(emergencyPulse, {
+          toValue: 1.0,
+          duration: 700,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ])
+    );
+    emergencyLoop.start();
+
+    return () => {
+      heartBeatLoop.stop();
+      emergencyLoop.stop();
+    };
   }, []);
 
   return (
     <View style={styles.root}>
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}>
-        {/* Hero */}
-        <View style={styles.hero}>
-          <Image source={{ uri: HERO_IMG }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+      {/* ========================================================================= */}
+      {/* MAIN APP CONTENT */}
+      {/* ========================================================================= */}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Top App Bar with Logo */}
+        <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 14) }]}>
+          <BrandLogo variant="horizontal" size="sm" />
+          <Pressable
+            style={styles.signInHeaderBtn}
+            onPress={() => router.push("/auth/mobile")}
+          >
+            <Ionicons name="person-circle-outline" size={18} color={colors.brandPrimary} />
+            <Text style={styles.signInHeaderText}>Sign In</Text>
+          </Pressable>
+        </View>
+
+        {/* Animated Hero Section */}
+        <Animated.View
+          style={[
+            styles.heroCard,
+            {
+              opacity: heroFade,
+              transform: [{ translateY: heroTranslate }],
+            },
+          ]}
+        >
           <LinearGradient
-            colors={["rgba(28,28,30,0.1)", "rgba(28,28,30,0.95)"]}
-            style={StyleSheet.absoluteFillObject}
+            colors={["#0B132B", "#1C2541", "#0B132B"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
           />
-          <View style={[styles.heroInner, { paddingTop: insets.top + 24 }]}>
-            <View style={styles.brandRow}>
-              <View style={styles.logoDot}><Ionicons name="water" size={20} color="#FFFFFF" /></View>
-              <Text style={styles.brand}>K2 Life Drop</Text>
+          {/* Subtle Ambient Radial Glows */}
+          <View style={styles.heroGlowRed} />
+          <View style={styles.heroGlowBlue} />
+
+          <View style={styles.heroContent}>
+            {/* Center Animated Logo Showcase */}
+            <Animated.View
+              style={[
+                styles.heroLogoWrap,
+                { transform: [{ scale: pulseScale }] },
+              ]}
+            >
+              <Image
+                source={LOGO_SYMBOL}
+                style={styles.heroLogoImg}
+                resizeMode="contain"
+                accessibilityLabel="KK Life Drop Official Emblem"
+              />
+            </Animated.View>
+
+            {/* Tamil Motto Badge */}
+            <View style={styles.tamilMottoPill}>
+              <Text style={styles.tamilMotto}>யாதும் ஊரே..! யாவரும் கேளிர்..!</Text>
             </View>
-            <Text style={styles.heroTitle}>Every Drop{"\n"}Can Save a Life</Text>
-            <Text style={styles.heroSub}>
-              India's trusted blood donation network — connect donors and seekers in minutes.
+
+            {/* Tricolor Headings */}
+            <View style={styles.titleRow}>
+              <Text style={styles.heroTitleKK}>KK </Text>
+              <Text style={styles.heroTitleLife}>Life </Text>
+              <Text style={styles.heroTitleDrop}>Drop</Text>
+            </View>
+            <Text style={styles.heroSubTag}>DONATE BLOOD, SAVE LIVES</Text>
+
+            <Text style={styles.heroDescription}>
+              A dedicated humanitarian blood donation platform connecting compassionate donors with patients in emergency need across Tamil Nadu & Puducherry.
             </Text>
+
+            {/* Primary Action Buttons */}
             <View style={styles.ctaRow}>
               <Pressable
                 testID="donate-blood-cta"
-                style={[styles.cta, { backgroundColor: colors.brandPrimary }]}
+                style={[styles.cta, styles.ctaPrimary]}
                 onPress={() => router.push("/auth/mobile")}
               >
                 <Ionicons name="water" size={18} color="#FFFFFF" />
-                <Text style={styles.ctaText}>Donate Blood</Text>
+                <Text style={styles.ctaTextPrimary}>Donate Blood</Text>
               </Pressable>
+
               <Pressable
                 testID="request-blood-cta"
-                style={[styles.cta, { backgroundColor: "#FFFFFF" }]}
+                style={[styles.cta, styles.ctaEmergency]}
                 onPress={() => router.push("/request-blood")}
               >
-                <Ionicons name="alert-circle" size={18} color={colors.brandPrimary} />
-                <Text style={[styles.ctaText, { color: colors.brandPrimary }]}>Request Blood</Text>
+                <Ionicons name="alert-circle" size={18} color="#FFFFFF" />
+                <Text style={styles.ctaTextEmergency}>Request Blood</Text>
               </Pressable>
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* Official Organization Trust Banner */}
+        <View style={styles.orgSection}>
+          <View style={styles.orgBannerCard}>
+            <Image
+              source={BANNER_IMG}
+              style={styles.orgBannerImg}
+              resizeMode="contain"
+            />
+            <View style={styles.orgDivider} />
+            <View style={styles.orgBadgeRow}>
+              <View style={styles.trustBadge}>
+                <Ionicons name="shield-checkmark" size={14} color={colors.brandBlue} />
+                <Text style={styles.trustBadgeText}>Reg: 31/2025 (Act XXI of 1860)</Text>
+              </View>
+              <View style={[styles.trustBadge, { backgroundColor: "#ECFDF5" }]}>
+                <Ionicons name="ribbon" size={14} color={colors.brandGreen} />
+                <Text style={[styles.trustBadgeText, { color: colors.brandGreen }]}>
+                  ISO 9001:2015 Certified
+                </Text>
+              </View>
             </View>
           </View>
         </View>
 
-        {/* How it works */}
-        <Section title="How K2 Life Drop Works">
+        {/* Emergency Alert Banner with Pulsing Icon */}
+        <View style={styles.sectionWrap}>
+          <Pressable
+            testID="emergency-request-btn"
+            style={styles.emergencyCard}
+            onPress={() => router.push("/request-blood")}
+          >
+            <LinearGradient
+              colors={["#D31027", "#990012"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <Animated.View
+              style={[
+                styles.emergencyIcon,
+                { transform: [{ scale: emergencyPulse }] },
+              ]}
+            >
+              <Ionicons name="flash" size={24} color="#FFFFFF" />
+            </Animated.View>
+            <View style={{ flex: 1 }}>
+              <View style={styles.emergencyPill}>
+                <Text style={styles.emergencyPillText}>URGENT NEED</Text>
+              </View>
+              <Text style={styles.emergencyTitle}>Emergency Blood Requirement?</Text>
+              <Text style={styles.emergencyDesc}>
+                Submit an immediate request. Kaarai Karangal coordinators reach verified donors instantly.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color="#FFFFFF" />
+          </Pressable>
+        </View>
+
+        {/* How It Works */}
+        <Section title="How KK Life Drop Works">
           {[
-            { icon: "person-add", t: "Register as Donor", d: "Verify mobile with OTP and complete your profile." },
-            { icon: "search", t: "Find Donors", d: "Browse available donors by blood group and area." },
-            { icon: "notifications", t: "Get Notified", d: "Receive urgent blood requests matching your group." },
-            { icon: "heart", t: "Save Lives", d: "Admin coordinates safe donor–requester communication." },
+            {
+              icon: "phone-portrait",
+              color: colors.brandBlue,
+              bg: colors.brandSecondaryLight,
+              t: "1. Quick OTP Verification",
+              d: "Sign up securely in 30 seconds with mobile OTP. No passwords to remember.",
+            },
+            {
+              icon: "shield-checkmark",
+              color: colors.brandGreen,
+              bg: colors.brandTertiaryLight,
+              t: "2. Privacy-Protected Registry",
+              d: "Your contact details and Aadhaar are strictly encrypted and never revealed publicly.",
+            },
+            {
+              icon: "notifications",
+              color: colors.brandRed,
+              bg: colors.brandPrimaryLight,
+              t: "3. Targeted Urgent Alerts",
+              d: "Receive notifications only for matching blood groups in your area or district.",
+            },
+            {
+              icon: "heart-circle",
+              color: "#E11D48",
+              bg: "#FFE4E6",
+              t: "4. Admin-Guided Safe Donation",
+              d: "Kaarai Karangal coordinators coordinate patient verification and donation safely.",
+            },
           ].map((x, i) => (
             <View key={i} style={styles.howCard}>
-              <View style={styles.howIcon}>
-                <Ionicons name={x.icon as any} size={22} color={colors.brandPrimary} />
+              <View style={[styles.howIcon, { backgroundColor: x.bg }]}>
+                <Ionicons name={x.icon as any} size={22} color={x.color} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.howTitle}>{x.t}</Text>
@@ -87,84 +376,142 @@ export default function Landing() {
           ))}
         </Section>
 
-        {/* Blood groups */}
-        <Section title="Available Blood Groups">
+        {/* Blood Groups Available in Network */}
+        <Section
+          title="Blood Groups in Network"
+          rightAction={{ label: "Register as Donor", onPress: () => router.push("/auth/mobile") }}
+        >
           <View style={styles.bgGrid}>
             {GROUPS.map((g) => (
-              <View key={g} style={styles.bgCell}>
+              <Pressable
+                key={g}
+                style={styles.bgCell}
+                onPress={() => router.push("/request-blood")}
+              >
                 <BloodGroupBadge group={g} size="md" />
-              </View>
+                <Text style={styles.bgLabel}>Group {g}</Text>
+              </Pressable>
             ))}
+          </View>
+          <View style={styles.bgCtaBox}>
+            <Ionicons name="information-circle" size={18} color={colors.brandBlue} />
+            <Text style={styles.bgCtaText}>
+              All rare & common blood groups are actively coordinated by verified volunteers.
+            </Text>
           </View>
         </Section>
 
-        {/* Recent donors */}
-        <Section title="Available Donors" rightAction={{ label: "See all", onPress: () => router.push("/auth/mobile") }}>
-          {donors.length === 0 ? (
-            <Text style={styles.muted}>Loading donors…</Text>
-          ) : (
-            donors.map((d) => (
-              <View key={d.id} style={styles.donorRow} testID={`landing-donor-${d.id}`}>
-                <BloodGroupBadge group={d.blood_group} />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.donorName}>{d.full_name}</Text>
-                  <Text style={styles.donorMeta}>
-                    <Ionicons name="location-outline" size={12} color={colors.muted} /> {d.area}, {d.district}
-                  </Text>
-                </View>
-                <View style={[styles.pill, { backgroundColor: d.availability === "Available" ? "#E6F4EA" : colors.surfaceTertiary }]}>
-                  <View style={[styles.dot, { backgroundColor: d.availability === "Available" ? colors.success : colors.muted }]} />
-                  <Text style={[styles.pillText, { color: d.availability === "Available" ? colors.success : colors.muted }]}>
-                    {d.availability}
-                  </Text>
-                </View>
-              </View>
-            ))
-          )}
-        </Section>
-
-        {/* Emergency */}
-        <Section title="Emergency?">
-          <Pressable testID="emergency-request-btn" style={styles.emergencyCard} onPress={() => router.push("/request-blood")}>
-            <View style={styles.emergencyIcon}><Ionicons name="warning" size={24} color="#FFFFFF" /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.emergencyTitle}>Emergency Blood Request</Text>
-              <Text style={styles.emergencyDesc}>Submit a request and our admin team coordinates donors immediately.</Text>
+        {/* Privacy & Trust Protection Guarantee */}
+        <View style={styles.sectionWrap}>
+          <View style={styles.trustSectionCard}>
+            <View style={styles.trustIconCircle}>
+              <Ionicons name="lock-closed" size={22} color={colors.brandBlue} />
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#FFFFFF" />
-          </Pressable>
-        </Section>
-
-        {/* Contact */}
-        <Section title="Need Help?">
-          <View style={styles.helpCard}>
-            <Ionicons name="shield-checkmark" size={22} color={colors.brandPrimary} />
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.helpTitle}>Admin-Assisted Communication</Text>
-              <Text style={styles.helpDesc}>
-                Donor contact details are never shared publicly. All communication is coordinated by K2 Life Drop admin for your safety.
+            <View style={{ flex: 1 }}>
+              <Text style={styles.trustSectionTitle}>100% Privacy & Identity Protection</Text>
+              <Text style={styles.trustSectionDesc}>
+                Donor mobile numbers and encrypted Aadhaar IDs are never published or exposed to the public. Kaarai Karangal Social Service Organization acts as a verified, confidential bridge.
               </Text>
             </View>
           </View>
-        </Section>
+        </View>
 
-        {/* Admin subtle access */}
-        <View style={{ alignItems: "center", marginTop: 8 }}>
+        {/* Admin Access Footer */}
+        <View style={styles.adminFooter}>
           <Pressable
             testID="admin-login-dot"
-            hitSlop={16}
+            hitSlop={24}
             onPress={() => router.push("/auth/admin-login")}
-            style={{ padding: 12 }}
+            style={styles.adminDotBtn}
           >
-            <Text style={{ color: colors.muted, fontSize: 20 }}>•</Text>
+            <Text style={styles.adminDotText}>•</Text>
           </Pressable>
+          <Text style={styles.footerCopyright}>
+            © {new Date().getFullYear()} Kaarai Karangal Samooga Sevai Amaippu. All rights reserved.
+          </Text>
         </View>
       </ScrollView>
+
+      {/* ========================================================================= */}
+      {/* OPENING APP LOGO ANIMATION SPLASH OVERLAY */}
+      {/* ========================================================================= */}
+      {showSplash ? (
+        <Animated.View
+          style={[styles.splashOverlay, { opacity: splashOpacity }]}
+          pointerEvents="none"
+        >
+          <LinearGradient
+            colors={["#0B132B", "#1C2541", "#0B132B"]}
+            style={StyleSheet.absoluteFill}
+          />
+
+          {/* Animated Glow Rings */}
+          <Animated.View
+            style={[
+              styles.splashGlowRing,
+              { transform: [{ scale: splashRingScale }] },
+            ]}
+          />
+
+          <View style={styles.splashContent}>
+            {/* Center Animated Logo Emblem */}
+            <Animated.View
+              style={[
+                styles.splashLogoContainer,
+                {
+                  opacity: splashLogoOpacity,
+                  transform: [{ scale: splashLogoScale }],
+                },
+              ]}
+            >
+              <Image
+                source={LOGO_SYMBOL}
+                style={styles.splashLogoImg}
+                resizeMode="contain"
+              />
+            </Animated.View>
+
+            {/* Animated Brand Typography */}
+            <Animated.View
+              style={[
+                styles.splashTextWrap,
+                {
+                  opacity: splashTextOpacity,
+                  transform: [{ translateY: splashTextTranslate }],
+                },
+              ]}
+            >
+              <View style={styles.titleRow}>
+                <Text style={styles.splashTitleKK}>KK </Text>
+                <Text style={styles.splashTitleLife}>Life </Text>
+                <Text style={styles.splashTitleDrop}>Drop</Text>
+              </View>
+              <Text style={styles.splashTagline}>DONATE BLOOD, SAVE LIVES</Text>
+
+              <View style={styles.splashTamilBadge}>
+                <Text style={styles.splashTamilText}>யாதும் ஊரே..! யாவரும் கேளிர்..!</Text>
+              </View>
+
+              <Text style={styles.splashOrgText}>
+                Kaarai Karangal Samooga Sevai Amaippu
+              </Text>
+            </Animated.View>
+          </View>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
 
-function Section({ title, children, rightAction }: { title: string; children: React.ReactNode; rightAction?: { label: string; onPress: () => void } }) {
+function Section({
+  title,
+  children,
+  rightAction,
+}: {
+  title: string;
+  children: React.ReactNode;
+  rightAction?: { label: string; onPress: () => void };
+}) {
   return (
     <View style={styles.section}>
       <View style={styles.sectionHead}>
@@ -181,67 +528,537 @@ function Section({ title, children, rightAction }: { title: string; children: Re
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surface },
-  hero: { height: 460, overflow: "hidden" },
-  heroInner: { flex: 1, padding: spacing.lg, justifyContent: "space-between" },
-  brandRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  logoDot: {
-    width: 36, height: 36, borderRadius: 18, backgroundColor: colors.brandPrimary,
-    alignItems: "center", justifyContent: "center",
+  root: { flex: 1, width: "100%", backgroundColor: "#F8FAFC" },
+
+  /* Top Bar */
+  topBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+    width: "100%",
   },
-  brand: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
-  heroTitle: { color: "#FFFFFF", fontSize: 42, fontWeight: "800", letterSpacing: -1.5, marginTop: spacing.lg },
-  heroSub: { color: "#FFFFFFCC", fontSize: 15, marginTop: 10, lineHeight: 22 },
-  ctaRow: { flexDirection: "row", gap: 10, marginTop: spacing.xl, marginBottom: 8 },
+  signInHeaderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FEE2E2",
+    backgroundColor: "#FFF1F2",
+  },
+  signInHeaderText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.brandPrimary,
+  },
+
+  /* Hero Section */
+  heroCard: {
+    width: "92%",
+    maxWidth: 680,
+    alignSelf: "center",
+    marginVertical: spacing.lg,
+    borderRadius: 24,
+    overflow: "hidden",
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    position: "relative",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  heroGlowRed: {
+    position: "absolute",
+    top: -40,
+    right: -40,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: "rgba(211, 16, 39, 0.25)",
+  },
+  heroGlowBlue: {
+    position: "absolute",
+    bottom: -50,
+    left: -50,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: "rgba(0, 82, 212, 0.22)",
+  },
+  heroContent: {
+    alignItems: "center",
+  },
+  heroLogoWrap: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: "rgba(255, 255, 255, 0.96)",
+    padding: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+    marginBottom: spacing.md,
+  },
+  heroLogoImg: {
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+  },
+  tamilMottoPill: {
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  tamilMotto: {
+    color: "#E2E8F0",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "center",
+    flexWrap: "nowrap",
+    marginTop: 2,
+  },
+  heroTitleKK: {
+    fontSize: 34,
+    fontWeight: "900",
+    color: "#38BDF8",
+    letterSpacing: -0.5,
+  },
+  heroTitleLife: {
+    fontSize: 34,
+    fontWeight: "900",
+    color: "#4ADE80",
+    letterSpacing: -0.5,
+  },
+  heroTitleDrop: {
+    fontSize: 34,
+    fontWeight: "900",
+    color: "#FF4D4D",
+    letterSpacing: -0.5,
+  },
+  heroSubTag: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 2.5,
+    color: "rgba(255, 255, 255, 0.82)",
+    marginTop: 2,
+    marginBottom: spacing.md,
+  },
+  heroDescription: {
+    color: "#CBD5E1",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.sm,
+  },
+  ctaRow: {
+    flexDirection: "row",
+    gap: 12,
+    width: "100%",
+  },
   cta: {
-    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 8, paddingVertical: 15, borderRadius: radius.md,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  ctaText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
-  section: { paddingHorizontal: spacing.lg, marginTop: spacing.xl },
-  sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  sectionTitle: { fontSize: 20, fontWeight: "800", color: colors.onSurface, letterSpacing: -0.3 },
-  sectionAction: { color: colors.brandPrimary, fontWeight: "600", fontSize: 14 },
-  howCard: {
-    flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.lg, padding: spacing.lg, marginBottom: 10, gap: 12,
+  ctaPrimary: {
+    backgroundColor: colors.brandPrimary,
   },
-  howIcon: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandTertiary,
-    alignItems: "center", justifyContent: "center",
+  ctaEmergency: {
+    backgroundColor: "#DC2626",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
   },
-  howTitle: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
-  howDesc: { fontSize: 13, color: colors.muted, marginTop: 2 },
-  bgGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, justifyContent: "space-between" },
-  bgCell: {
-    width: "22%", aspectRatio: 1, alignItems: "center", justifyContent: "center",
-    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
+  ctaTextPrimary: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
   },
-  donorRow: {
-    flexDirection: "row", alignItems: "center",
-    backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg,
-    padding: spacing.md, marginBottom: 10,
+  ctaTextEmergency: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
   },
-  donorName: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
-  donorMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  pill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  pillText: { fontSize: 11, fontWeight: "700" },
+
+  /* Organization Banner */
+  orgSection: {
+    width: "92%",
+    maxWidth: 680,
+    alignSelf: "center",
+    marginBottom: spacing.sm,
+  },
+  orgBannerCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  orgBannerImg: {
+    width: "100%",
+    height: 75,
+  },
+  orgDivider: {
+    height: 1,
+    backgroundColor: "#F1F5F9",
+    marginVertical: spacing.sm,
+  },
+  orgBadgeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "center",
+  },
+  trustBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: colors.brandSecondaryLight,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+  },
+  trustBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.brandBlue,
+  },
+
+  /* Emergency Section */
+  sectionWrap: {
+    width: "92%",
+    maxWidth: 680,
+    alignSelf: "center",
+    marginTop: spacing.lg,
+  },
   emergencyCard: {
-    flexDirection: "row", alignItems: "center", backgroundColor: colors.brandPrimary,
-    borderRadius: radius.lg, padding: spacing.lg, gap: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: 14,
+    overflow: "hidden",
+    shadowColor: "#D31027",
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 4,
   },
   emergencyIcon: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center", justifyContent: "center",
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  emergencyTitle: { fontSize: 16, fontWeight: "800", color: "#FFFFFF" },
-  emergencyDesc: { fontSize: 12, color: "#FFFFFFCC", marginTop: 2 },
-  helpCard: {
-    flexDirection: "row", alignItems: "flex-start",
-    backgroundColor: colors.brandTertiary, borderRadius: radius.lg, padding: spacing.lg,
+  emergencyPill: {
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: 4,
   },
-  helpTitle: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
-  helpDesc: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 4, lineHeight: 18 },
-  muted: { color: colors.muted, fontSize: 13 },
+  emergencyPillText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+  emergencyTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
+  emergencyDesc: {
+    fontSize: 12,
+    color: "#FFFFFFEE",
+    marginTop: 2,
+    lineHeight: 16,
+  },
+
+  /* Sections */
+  section: {
+    width: "92%",
+    maxWidth: 680,
+    alignSelf: "center",
+    marginTop: spacing.xl,
+  },
+  sectionHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    fontSize: 19,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.3,
+  },
+  sectionAction: {
+    color: colors.brandPrimary,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+
+  /* How it works */
+  howCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: 10,
+    gap: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOpacity: 0.03,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  howIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  howTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  howDesc: {
+    fontSize: 13,
+    color: "#64748B",
+    marginTop: 2,
+    lineHeight: 18,
+  },
+
+  /* Blood Groups */
+  bgGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "space-between",
+  },
+  bgCell: {
+    width: "22%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  bgLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748B",
+    marginTop: 6,
+  },
+  bgCtaBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#EFF6FF",
+    padding: 12,
+    borderRadius: radius.md,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  bgCtaText: {
+    fontSize: 12,
+    color: "#1E40AF",
+    flex: 1,
+    lineHeight: 16,
+  },
+
+  /* Privacy card */
+  trustSectionCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#EFF6FF",
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: 14,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  trustIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#DBEAFE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  trustSectionTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#1E3A8A",
+  },
+  trustSectionDesc: {
+    fontSize: 13,
+    color: "#1E40AF",
+    marginTop: 4,
+    lineHeight: 19,
+  },
+
+  /* Footer */
+  adminFooter: {
+    alignItems: "center",
+    marginTop: spacing.xl,
+    paddingBottom: spacing.lg,
+  },
+  adminDotBtn: {
+    padding: 10,
+  },
+  adminDotText: {
+    color: "#94A3B8",
+    fontSize: 22,
+  },
+  footerCopyright: {
+    fontSize: 11,
+    color: "#94A3B8",
+    marginTop: 4,
+  },
+
+  /* ========================================================================= */
+  /* SPLASH OVERLAY STYLES */
+  /* ========================================================================= */
+  splashOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "#0B132B",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+  },
+  splashGlowRing: {
+    position: "absolute",
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: "rgba(211, 16, 39, 0.22)",
+  },
+  splashContent: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+  },
+  splashLogoContainer: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 20,
+    elevation: 12,
+    marginBottom: spacing.lg,
+  },
+  splashLogoImg: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+  },
+  splashTextWrap: {
+    alignItems: "center",
+  },
+  splashTitleKK: {
+    fontSize: 36,
+    fontWeight: "900",
+    color: "#38BDF8",
+    letterSpacing: -0.5,
+  },
+  splashTitleLife: {
+    fontSize: 36,
+    fontWeight: "900",
+    color: "#4ADE80",
+    letterSpacing: -0.5,
+  },
+  splashTitleDrop: {
+    fontSize: 36,
+    fontWeight: "900",
+    color: "#FF4D4D",
+    letterSpacing: -0.5,
+  },
+  splashTagline: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 3,
+    color: "rgba(255, 255, 255, 0.85)",
+    marginTop: 4,
+  },
+  splashTamilBadge: {
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.25)",
+  },
+  splashTamilText: {
+    color: "#E2E8F0",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  splashOrgText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: spacing.sm,
+  },
 });
