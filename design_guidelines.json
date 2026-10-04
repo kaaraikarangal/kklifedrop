@@ -1,0 +1,173 @@
+{
+  "app_name": "K2 Life Drop",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A highly trusted, clean, and serious medical utility prioritizing clarity, urgency, and human life over gamification.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#1C1C1E",
+    "surfaceSecondary": "#F5F5F5",
+    "onSurfaceSecondary": "#3A3A3C",
+    "surfaceTertiary": "#EEEEEE",
+    "onSurfaceTertiary": "#48484A",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#D32F2F",
+    "brandPrimary": "#D32F2F",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E53935",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#FFEBEE",
+    "onBrandTertiary": "#D32F2F",
+    "success": "#2E7D32",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F57C00",
+    "onWarning": "#FFFFFF",
+    "error": "#D32F2F",
+    "onError": "#FFFFFF",
+    "info": "#616161",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5EA",
+    "borderStrong": "#C7C7CC",
+    "divider": "#E5E5EA",
+    "muted": "#8E8E93",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "PlusJakartaSans",
+    "textFontFamily": "DMSans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room for readability. Forms and lists must not feel cramped. Important actions require standard thumb-zone clearance at bottom.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Bottom tab bar",
+      "Sticky headers over scrolling content",
+      "Featured emergency request cards (frosted overlay on medical image)",
+      "Floating action buttons"
+    ],
+    "dont's": [
+      "Standard list rows",
+      "Form inputs",
+      "Small chips or badges"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home",
+      "purpose": "Central hub displaying real-time donor status, urgent emergency requests, and quick actions.",
+      "states": {
+        "loading": "Skeleton UI for hero card and request list.",
+        "empty": "No active requests. Show a clean, medical-themed illustration thanking the user for being available.",
+        "error": "Failed to fetch data. 'Tap to retry' with a subtle warning icon."
+      },
+      "layout": "Top safe-area header with user greeting and 'Active Donor' availability toggle. Hero card for the most urgent emergency request (red accented, frosted glass overlay on image). Horizontal scroll section for 'Urgent Blood Groups Needed'. Vertical list of recent donation requests. Sticky FAB for 'New Blood Request'."
+    },
+    {
+      "name": "Donors",
+      "purpose": "Searchable directory of available donors by blood group and location.",
+      "states": {
+        "loading": "Skeleton rows for donor profiles.",
+        "empty": "No donors found for selected filters. Clear filters CTA.",
+        "error": "Connection error. Retry button."
+      },
+      "layout": "Sticky search bar at the top with pinned filter chips for Blood Groups (A+, O-, etc.). Vertical list of donor cards. Each card displays name, avatar, prominent blood group badge, distance/location, and a 'Request' CTA button."
+    },
+    {
+      "name": "Requests",
+      "purpose": "Manage and track active blood requests (My Requests vs. Fulfilling).",
+      "states": {
+        "loading": "Skeleton cards.",
+        "empty": "No active requests. 'Create Request' primary CTA.",
+        "error": "Unable to load requests. Retry button."
+      },
+      "layout": "Sticky segmented control at top (My Requests | Fulfilling). List of status cards showing recipient details, hospital name, units needed, and a prominent status chip (Pending/Fulfilled). Emergency requests get a 1.5pt red border and alert icon."
+    },
+    {
+      "name": "Notifications",
+      "purpose": "Alerts for emergency blood needs in the area and status updates on requests.",
+      "states": {
+        "loading": "Skeleton rows.",
+        "empty": "No new notifications. Clean checkmark icon.",
+        "error": "Failed to load. Retry button."
+      },
+      "layout": "Simple vertical list of notification rows. Unread items have a subtle brandTertiary background. Emergency alerts feature a prominent red icon and bolded text."
+    },
+    {
+      "name": "Profile",
+      "purpose": "Manage personal info, Aadhaar verification, donation history, and app settings.",
+      "states": {
+        "loading": "Skeleton profile header.",
+        "empty": "N/A",
+        "error": "Failed to load profile. Retry button."
+      },
+      "layout": "Profile header with avatar and oversized blood group badge. Aadhaar verification status badge (green check). Main settings list including Availability toggle, Donation History, and a link to Admin Dashboard (if user is admin)."
+    }
+  ],
+  "images": {
+    "hero_blood_drive": {
+      "url": "https://images.unsplash.com/photo-1615461066159-fea0960485d5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxibG9vZCUyMGRvbmF0aW9uJTIwZHJpdmUlMjBoZXJvfGVufDB8fHx8MTc5MTA5MDk2Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Healthcare worker drawing blood"
+    },
+    "emergency_alert": {
+      "url": "https://images.unsplash.com/photo-1588268393007-068bc70a443d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w7NDk1ODF8MHwxfHNlYXJjaHwxfHxtZWRpY2FsJTIwZW1lcmdlbmN5JTIwcmVkJTIwd2hpdGV8ZW58MHx8fHwxNzkxMDkwOTYyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Red emergency sign lit up in the dark"
+    },
+    "avatar_volunteer": {
+      "url": "https://images.unsplash.com/photo-1590086782792-42dd2350140d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwyfHxzbWlsaW5nJTIwdm9sdW50ZWVyJTIwcG9ydHJhaXQlMjB3aGl0ZSUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzkxMDkwOTcwfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Smiling volunteer portrait"
+    }
+  },
+  "haptics": {
+    "primary_button_press": "impactMedium",
+    "tab_switch": "selection",
+    "availability_toggle": "impactLight",
+    "emergency_request_submit": "notificationSuccess",
+    "pull_to_refresh": "impactLight"
+  },
+  "instructions_to_main_agent": [
+    "Ensure standard thumb-zone clearance for all bottom CTAs.",
+    "Do NOT use blue, indigo, or purple. Use the provided red/white palette with dark grey for neutral text/icons.",
+    "Emergency requests must be visually highlighted with a red badge, border, or icon, depending on the layout context.",
+    "Do NOT over-animate. Stick to subtle, smooth React Native Reanimated transitions. Avoid gaming-style bouncy physics.",
+    "Ensure all text over images (like the hero card) uses a vertical gradient scrim (transparent to surfaceInverse) to maintain WCAG AAA readability.",
+    "Forms must use top-aligned labels, not floating labels.",
+    "Ensure Aadhaar verification status is clearly visible but secure (no full numbers displayed)."
+  ]
+}

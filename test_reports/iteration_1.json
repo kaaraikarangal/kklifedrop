@@ -1,0 +1,47 @@
+{
+  "summary": "Backend-only testing for K2 Life Drop. Wrote 27 pytest cases covering meta, OTP (send/rate-limit/verify/wrong-OTP), donor registration (incl. 409 duplicate, sensitive-field redaction, masked_aadhaar), public listing + filters (blood_group=B+, search=karaikal), /donors/me GET+PATCH, blood-request creation with K2-BR-YYYYMMDD-NNN numbering, GET-by-id and by-request_number, mobile filter, contact-donor flow, admin login (admin@k2lifedrop.com/Admin@123), /admin/stats (all required counters incl. donors_by_blood_group), /admin/donors (mobile/email/aadhaar_status without raw aadhaar), /admin/donors/{id}/aadhaar reveal + audit, matching-donors buckets (same_area/same_district/other filtered by Available + donation_opt_in + eligibility), notify with scope=same_area → request moves to 'Donors Notified' + notification rows created, donor-responses 'I Can Donate' → 'Donor Found', admin grouped notifications (notified/responded/can_donate), admin PATCH status → Fulfilled, user token blocked from /admin/stats (403), admin token blocked from /donors/me (403), and donor notifications feed with request details. All responses verified free of `_id` and `encrypted_aadhaar`. Fixed one critical backend bug (timezone-aware vs naive datetime comparison in /auth/verify-otp) blocking all OTP verifications. 27/27 passed on final run.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/auth/verify-otp",
+        "issue": "500 Internal Server Error – `TypeError: can't compare offset-naive and offset-aware datetimes`. MongoDB returns naive datetimes for `expires_at`, but code compared with `now_utc()` which is tz-aware. Blocked every OTP verification (user login, donor-notification tests, etc.). FIXED by normalizing `expires_at` to UTC-aware before comparison in server.py.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_k2_life_drop.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Review the timezone fix in /auth/verify-otp (server.py around line 450). Consider applying the same tz-normalization pattern to other places if any datetime stored in Mongo is later compared with aware datetimes (none currently found, but defensive helper e.g. `as_utc(dt)` would be cleaner).",
+    "Consider removing `dev_otp` from the response when `SMS_PROVIDER != mock` is strictly enforced in prod builds (already conditional on mock, so just verify env in prod)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~1090 lines — approaching the 700-line split threshold. Recommend splitting into modules (auth.py, donors.py, blood_requests.py, admin.py, deps.py, models.py) in a future refactor.",
+    "`last_donation_date` eligibility check uses `date.today()` (local date) which may differ from server UTC. Minor, but prefer `datetime.now(timezone.utc).date()`.",
+    "`admin_update_donor` accepts `body: dict` (no Pydantic validation). Move to a typed model for safety.",
+    "`fernet` falls back to an ephemeral generated key on bad env – silent data loss risk. Should fail-fast instead; the current .env key is valid so not hit, but defensive.",
+    "`db.otps` has no TTL index on `expires_at`; collection will grow unbounded.",
+    "No index on `donor_responses` or `audit_logs`."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed tz-aware vs naive datetime comparison in verify_otp)",
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_k2_life_drop.py (new, 27 tests)"
+  ],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "not tested (backend-only)"},
+  "seed_data_creation": "Did not reseed. Used existing 8 demo donors + created ~6 test donors (prefixed TEST_) and several test blood requests during the run; no destructive cleanup was performed (data remains for debugging).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend fully green against EXPO_PUBLIC_BACKEND_URL. Run `pytest -n 0 backend/tests/test_k2_life_drop.py` (serial) – parallel execution works but hits OTP rate limit (3/10min per mobile) when fixtures share randomly-generated mobiles. The tz-fix in verify_otp is critical; without it OTP login is completely broken.",
+  "rca_of_issue": "RCA for OTP 500: Motor returns MongoDB datetimes without tzinfo (naive). `verify_otp` compared `rec['expires_at']` (naive) with `now_utc()` (aware) → TypeError raised inside the handler → 500. Repro: POST /api/auth/send-otp then POST /api/auth/verify-otp with the dev_otp. Mitigation: normalize naive datetimes read from Mongo to UTC-aware before comparing with aware datetimes (patch applied). Longer-term: either store datetimes consistently as naive-UTC in handler-side comparisons, or add a small helper `as_utc(dt)` and use it everywhere."
+}
