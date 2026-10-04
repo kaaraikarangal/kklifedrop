@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "KK Life Drop",
-    "slug": "kklifedrop",
+    "slug": "kaaraikarangal",
+    "owner": "kaaraikarangals-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
