@@ -17,14 +17,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { getRole, getToken } from "@/src/api";
-import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
 
 const LOGO_FULL = require("@/assets/images/kk_life_drop_logo.png");
 const LOGO_SYMBOL = require("@/assets/images/kk_life_drop_symbol.png");
 const BANNER_IMG = require("@/assets/images/kaarai_karangal_banner.png");
-
-const GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 const USE_NATIVE_DRIVER = Platform.OS !== "web";
 
@@ -332,103 +329,28 @@ export default function Landing() {
           </Pressable>
         </View>
 
-        {/* How It Works */}
-        <Section title="How KK Life Drop Works">
-          {[
-            {
-              icon: "phone-portrait",
-              color: colors.brandBlue,
-              bg: colors.brandSecondaryLight,
-              t: "1. Quick OTP Verification",
-              d: "Sign up securely in 30 seconds with mobile OTP. No passwords to remember.",
-            },
-            {
-              icon: "shield-checkmark",
-              color: colors.brandGreen,
-              bg: colors.brandTertiaryLight,
-              t: "2. Privacy-Protected Registry",
-              d: "Your contact details and Aadhaar are strictly encrypted and never revealed publicly.",
-            },
-            {
-              icon: "notifications",
-              color: colors.brandRed,
-              bg: colors.brandPrimaryLight,
-              t: "3. Targeted Urgent Alerts",
-              d: "Receive notifications only for matching blood groups in your area or district.",
-            },
-            {
-              icon: "heart-circle",
-              color: "#E11D48",
-              bg: "#FFE4E6",
-              t: "4. Admin-Guided Safe Donation",
-              d: "Kaarai Karangal coordinators coordinate patient verification and donation safely.",
-            },
-          ].map((x, i) => (
-            <View key={i} style={styles.howCard}>
-              <View style={[styles.howIcon, { backgroundColor: x.bg }]}>
-                <Ionicons name={x.icon as any} size={22} color={x.color} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.howTitle}>{x.t}</Text>
-                <Text style={styles.howDesc}>{x.d}</Text>
-              </View>
-            </View>
-          ))}
-        </Section>
-
-        {/* Blood Groups Available in Network */}
-        <Section
-          title="Blood Groups in Network"
-          rightAction={{ label: "Register as Donor", onPress: () => router.push("/auth/mobile") }}
-        >
-          <View style={styles.bgGrid}>
-            {GROUPS.map((g) => (
-              <Pressable
-                key={g}
-                style={styles.bgCell}
-                onPress={() => router.push("/request-blood")}
-              >
-                <BloodGroupBadge group={g} size="md" />
-                <Text style={styles.bgLabel}>Group {g}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <View style={styles.bgCtaBox}>
-            <Ionicons name="information-circle" size={18} color={colors.brandBlue} />
-            <Text style={styles.bgCtaText}>
-              All rare & common blood groups are actively coordinated by verified volunteers.
-            </Text>
-          </View>
-        </Section>
-
-        {/* Privacy & Trust Protection Guarantee */}
-        <View style={styles.sectionWrap}>
-          <View style={styles.trustSectionCard}>
-            <View style={styles.trustIconCircle}>
-              <Ionicons name="lock-closed" size={22} color={colors.brandBlue} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.trustSectionTitle}>100% Privacy & Identity Protection</Text>
-              <Text style={styles.trustSectionDesc}>
-                Donor mobile numbers and encrypted Aadhaar IDs are never published or exposed to the public. Kaarai Karangal Social Service Organization acts as a verified, confidential bridge.
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Admin Access Footer */}
+        {/* Footer with Legal Links & Secret Admin Access */}
         <View style={styles.adminFooter}>
+          <View style={styles.legalLinksRow}>
+            <Pressable onPress={() => router.push("/terms")} testID="landing-terms-btn">
+              <Text style={styles.legalLinkText}>Terms & Conditions</Text>
+            </Pressable>
+            <Text style={styles.legalDot}>•</Text>
+            <Pressable onPress={() => router.push("/privacy")} testID="landing-privacy-btn">
+              <Text style={styles.legalLinkText}>Privacy Policy</Text>
+            </Pressable>
+          </View>
           <Pressable
             testID="admin-login-dot"
-            hitSlop={24}
+            hitSlop={{ top: 12, bottom: 12, left: 24, right: 24 }}
             onPress={() => router.push("/auth/admin-login")}
-            style={styles.adminDotBtn}
+            style={styles.adminSecretBtn}
+            accessibilityRole="none"
           >
-            <Text style={styles.adminDotText}>•</Text>
+            <Text style={styles.footerCopyright}>
+              © {new Date().getFullYear()} Kaarai Karangal Samooga Sevai Amaippu. All rights reserved.
+            </Text>
           </Pressable>
-          <Text style={styles.footerCopyright}>
-            © {new Date().getFullYear()} Kaarai Karangal Samooga Sevai Amaippu. All rights reserved.
-          </Text>
         </View>
       </ScrollView>
 
@@ -953,17 +875,33 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
     paddingBottom: spacing.lg,
   },
-  adminDotBtn: {
-    padding: 10,
+  legalLinksRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6,
   },
-  adminDotText: {
-    color: "#94A3B8",
-    fontSize: 22,
+  legalLinkText: {
+    fontSize: 12,
+    color: "#64748B",
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
+  legalDot: {
+    fontSize: 12,
+    color: "#CBD5E1",
+  },
+  adminSecretBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    ...Platform.select({
+      web: { cursor: "default" as any },
+    }),
   },
   footerCopyright: {
     fontSize: 11,
     color: "#94A3B8",
-    marginTop: 4,
+    textAlign: "center",
   },
 
   /* ========================================================================= */

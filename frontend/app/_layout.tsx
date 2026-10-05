@@ -1,3 +1,4 @@
+import React, { useEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { LogBox, View } from "react-native";
@@ -8,10 +9,17 @@ import { StatusBar } from "expo-status-bar";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { ToastHost } from "@/src/Toast";
+import { registerForPushNotificationsAsync, setupNotificationListeners } from "@/src/notifications";
 
 LogBox.ignoreAllLogs(true);
 
 export default function RootLayout() {
+  useEffect(() => {
+    registerForPushNotificationsAsync();
+    const cleanup = setupNotificationListeners();
+    return cleanup;
+  }, []);
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

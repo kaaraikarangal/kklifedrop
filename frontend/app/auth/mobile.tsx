@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { api, setSession } from "@/src/api";
+import { syncPushTokenWithBackend } from "@/src/notifications";
 import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
@@ -42,6 +43,7 @@ export default function MobileAuth() {
     try {
       const r: any = await api("/auth/verify-otp", { body: { mobile, otp } });
       await setSession(r.token, "user", r.mobile);
+      syncPushTokenWithBackend().catch(() => {});
       toast("success", "Verified", "Mobile number verified successfully");
       if (r.is_registered) {
         router.replace("/(tabs)/home");

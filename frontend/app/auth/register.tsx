@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
+import { syncPushTokenWithBackend } from "@/src/notifications";
 import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
@@ -35,6 +36,7 @@ export default function Register() {
     try {
       const payload = { ...f, last_donation_date: f.last_donation_date || null };
       await api("/donors", { auth: true, body: payload });
+      syncPushTokenWithBackend().catch(() => {});
       toast("success", "Registered", "Welcome to K2 Life Drop!");
       router.replace("/(tabs)/home");
     } catch (e: any) {
@@ -115,14 +117,32 @@ export default function Register() {
           <Switch testID="opt-in-switch" value={f.donation_opt_in} onValueChange={(v) => set("donation_opt_in", v)} trackColor={{ true: colors.brandPrimary }} />
         </View>
 
-        <Pressable onPress={() => set("consent", !f.consent)} style={styles.consentRow} testID="consent-row">
-          <View style={[styles.checkbox, f.consent && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]}>
-            {f.consent ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
-          </View>
+        <View style={styles.consentRow}>
+          <Pressable onPress={() => set("consent", !f.consent)} testID="consent-checkbox">
+            <View style={[styles.checkbox, f.consent && { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary }]}>
+              {f.consent ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+            </View>
+          </Pressable>
           <Text style={styles.consentText}>
-            I agree to the K2 Life Drop Terms & Privacy Policy and consent to the collection and processing of my information for blood donation coordination.
+            I agree to the{" "}
+            <Text
+              style={styles.legalLink}
+              onPress={() => router.push("/terms")}
+              testID="terms-link"
+            >
+              Terms & Conditions
+            </Text>
+            {" "}and{" "}
+            <Text
+              style={styles.legalLink}
+              onPress={() => router.push("/privacy")}
+              testID="privacy-link"
+            >
+              Privacy Policy
+            </Text>
+            {" "}and consent to voluntary blood donation coordination.
           </Text>
-        </Pressable>
+        </View>
 
         <Button testID="register-submit-btn" label="Complete Registration" onPress={submit} loading={loading} style={{ marginTop: spacing.lg }} />
       </ScrollView>
@@ -155,4 +175,5 @@ const styles = StyleSheet.create({
   consentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingVertical: 8 },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center", marginTop: 2 },
   consentText: { flex: 1, fontSize: 13, color: colors.onSurfaceSecondary, lineHeight: 18 },
+  legalLink: { color: colors.brandPrimary, fontWeight: "700", textDecorationLine: "underline" },
 });

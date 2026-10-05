@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Alert, Platform } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -39,6 +39,34 @@ export default function Profile() {
   async function logout() {
     await clearSession();
     router.replace("/");
+  }
+
+  async function performDeletion() {
+    try {
+      await api("/donors/me", { auth: true, method: "DELETE" });
+      await clearSession();
+      toast("info", "Account Deleted", "Your donor profile and data have been removed.");
+      router.replace("/");
+    } catch (e: any) {
+      toast("error", "Deletion Failed", e.message);
+    }
+  }
+
+  function confirmDeleteAccount() {
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm("Are you sure you want to permanently delete your donor registration and data? This action cannot be undone.")) {
+        performDeletion();
+      }
+      return;
+    }
+    Alert.alert(
+      "Delete Account & Data",
+      "Are you sure you want to permanently delete your donor registration and personal data? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete Permanently", style: "destructive", onPress: performDeletion },
+      ]
+    );
   }
 
   if (!me) {
@@ -85,19 +113,39 @@ export default function Profile() {
         <Switch testID="optin-switch" value={!!me.donation_opt_in} onValueChange={toggleOptIn} trackColor={{ true: colors.brandPrimary }} />
       </View>
 
-      <Text style={styles.section}>Account</Text>
-      <View style={styles.row}>
-        <Ionicons name="mail-outline" size={18} color={colors.onSurfaceSecondary} />
-        <Text style={[styles.rowTitle, { marginLeft: 10 }]}>{me.email}</Text>
-      </View>
-      <View style={styles.row}>
-        <Ionicons name="call-outline" size={18} color={colors.onSurfaceSecondary} />
-        <Text style={[styles.rowTitle, { marginLeft: 10 }]}>+91 {me.mobile}</Text>
-      </View>
+      <Text style={styles.section}>Legal & Policies</Text>
+      <Pressable
+        testID="terms-row"
+        style={styles.navRow}
+        onPress={() => router.push("/terms")}
+      >
+        <View style={styles.navRowLeft}>
+          <Ionicons name="document-text-outline" size={18} color={colors.onSurface} />
+          <Text style={styles.navRowTitle}>Terms & Conditions</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </Pressable>
+
+      <Pressable
+        testID="privacy-row"
+        style={styles.navRow}
+        onPress={() => router.push("/privacy")}
+      >
+        <View style={styles.navRowLeft}>
+          <Ionicons name="shield-checkmark-outline" size={18} color={colors.onSurface} />
+          <Text style={styles.navRowTitle}>Privacy Policy</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </Pressable>
 
       <Pressable testID="logout-btn" onPress={logout} style={styles.logout}>
-        <Ionicons name="log-out-outline" size={18} color={colors.error} />
-        <Text style={{ color: colors.error, fontWeight: "700" }}>Logout</Text>
+        <Ionicons name="log-out-outline" size={18} color={colors.onSurface} />
+        <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Logout</Text>
+      </Pressable>
+
+      <Pressable testID="delete-account-btn" onPress={confirmDeleteAccount} style={styles.deleteBtn}>
+        <Ionicons name="trash-outline" size={16} color={colors.error} />
+        <Text style={{ color: colors.error, fontWeight: "700", fontSize: 13 }}>Delete My Account & Personal Data</Text>
       </Pressable>
     </ScrollView>
   );
@@ -113,5 +161,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10 },
   rowTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  logout: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderWidth: 1, borderColor: colors.error, borderRadius: radius.md },
+  navRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10 },
+  navRowLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  navRowTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  logout: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md },
+  deleteBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, borderWidth: 1, borderColor: "#FCA5A5", borderRadius: radius.md, backgroundColor: "#FEF2F2" },
 });

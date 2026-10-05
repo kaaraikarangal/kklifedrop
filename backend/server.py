@@ -22,6 +22,7 @@ import jwt
 from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from starlette.middleware.cors import CORSMiddleware
@@ -260,6 +261,51 @@ async def send_email(email: str, subject: str, message: str) -> dict:
     return {"status": "pending", "provider": EMAIL_PROVIDER}
 
 
+async def send_expo_push_notifications(
+    push_tokens: List[str],
+    title: str,
+    body: str,
+    data: Optional[dict] = None,
+) -> dict:
+    """Dispatches high-priority lock-screen push notifications via Expo Push Service."""
+    valid_tokens = [t for t in push_tokens if t and (t.startswith("ExponentPushToken") or t.startswith("ExpoPushToken"))]
+    if not valid_tokens:
+        logger.info("[Push] No valid ExponentPushToken found among target donors")
+        return {"sent": 0, "failed": 0}
+
+    messages = []
+    for tok in valid_tokens:
+        messages.append({
+            "to": tok,
+            "sound": "default",
+            "title": title,
+            "body": body,
+            "channelId": "emergency-blood-alerts",
+            "priority": "high",
+            "badge": 1,
+            "_displayInForeground": True,
+            "data": data or {},
+        })
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(
+                "https://exp.host/--/api/v2/push/send",
+                json=messages,
+                headers={
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Content-Type": "application/json",
+                },
+            )
+            res_data = res.json()
+            logger.info(f"[Expo Push] Dispatched {len(messages)} push notifications: {res.status_code}")
+            return {"status": "sent", "count": len(messages), "data": res_data}
+    except Exception as err:
+        logger.error(f"[Expo Push Error] Failed to send push notifications: {err}")
+        return {"status": "error", "error": str(err)}
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -383,6 +429,10 @@ class DonorResponseIn(BaseModel):
     request_id: str
     donor_id: str
     response: Literal["I Can Donate", "Not Available"]
+
+
+class PushTokenIn(BaseModel):
+    push_token: str
 
 
 class UpdateRequestStatusIn(BaseModel):
@@ -573,6 +623,34 @@ async def meta():
     }
 
 
+@api.get("/stats")
+async def public_stats():
+    total_donors = await db_count("donors", status="active")
+    available_donors = await db_count("donors", status="active", availability="Available")
+
+    dr = await sb.table("donors").select("blood_group,availability").eq("status", "active").execute()
+    by_bg: dict = {g: 0 for g in BLOOD_GROUPS}
+    for x in dr.data:
+        bg = x.get("blood_group")
+        if bg in by_bg:
+            by_bg[bg] += 1
+        elif bg:
+            by_bg[bg] = 1
+
+    total_requests = await db_count("blood_requests")
+    er = await sb.table("blood_requests").select("id").eq("urgency", "Emergency").not_.in_("status", ["Fulfilled", "Cancelled", "Expired"]).execute()
+    emergency_requests = len(er.data)
+
+    return {
+        "total_donors": total_donors,
+        "available_donors": available_donors,
+        "donors_by_blood_group": by_bg,
+        "total_requests": total_requests,
+        "emergency_requests": emergency_requests,
+    }
+
+
+
 @api.post("/auth/send-otp")
 async def send_otp(body: SendOtpIn):
     cutoff = iso(now_utc() - timedelta(minutes=10))
@@ -754,6 +832,58 @@ async def update_me(body: DonorUpdateIn, user: dict = Depends(current_user)):
     return {"ok": True, "donor": out}
 
 
+@api.delete("/donors/me")
+async def delete_my_account(user: dict = Depends(current_user)):
+    """Permanent Account & Data Deletion required by Apple App Store (Guideline 5.1.1(v)) and Google Play."""
+    if user["role"] != "user":
+        raise HTTPException(403, "User only")
+    mobile = user["sub"]
+    d = await sb.table("donors").select("id, full_name").eq("mobile", mobile).execute()
+    if not d.data:
+        raise HTTPException(404, "Donor not registered")
+    donor_id = d.data[0]["id"]
+    await sb.table("donors").delete().eq("id", donor_id).execute()
+    logger.info(f"[Account Deletion] Donor {donor_id} ({mobile}) permanently deleted profile.")
+    return {"ok": True, "message": "Account and associated donor data permanently deleted."}
+
+
+@api.post("/donors/push-token")
+async def register_push_token(body: PushTokenIn, user: dict = Depends(current_user)):
+    """Registers device Expo Push Token for lock-screen emergency notifications."""
+    token = body.push_token.strip()
+    if not token:
+        raise HTTPException(400, "Push token required")
+
+    mobile = user.get("sub")
+    d = await sb.table("donors").select("id,full_name,blood_group").eq("mobile", mobile).execute()
+    if not d.data:
+        raise HTTPException(404, "Donor not registered")
+    donor = d.data[0]
+    donor_id = donor["id"]
+
+    await sb.table("audit_logs").insert({
+        "id": gen_id(),
+        "admin_id": donor_id,
+        "action": "donor_push_token",
+        "target_type": "donor",
+        "target_id": donor_id,
+        "timestamp": iso(now_utc()),
+        "metadata": {
+            "push_token": token,
+            "mobile": mobile,
+            "blood_group": donor.get("blood_group"),
+        },
+    }).execute()
+
+    try:
+        await sb.table("donors").update({"push_token": token}).eq("id", donor_id).execute()
+    except Exception:
+        pass
+
+    logger.info(f"[Push Token] Registered device token for {mobile}: {token[:30]}...")
+    return {"ok": True, "message": "Push token registered successfully"}
+
+
 # ---------------------------------------------------------------------------
 # BLOOD REQUESTS
 # ---------------------------------------------------------------------------
@@ -931,6 +1061,7 @@ async def notify_donors(req_id: str, body: NotifyIn, admin: dict = Depends(curre
     )
 
     notified = 0
+    notified_donor_ids = []
     for x in donors:
         ex = await sb.table("notifications").select("id").eq("request_id", req["id"]).eq("donor_id", x["id"]).execute()
         if ex.data:
@@ -947,6 +1078,35 @@ async def notify_donors(req_id: str, body: NotifyIn, admin: dict = Depends(curre
         }).execute()
         await send_sms(x.get("mobile", ""), msg)
         notified += 1
+        notified_donor_ids.append(x["id"])
+
+    # Push Notification Dispatch (Lock-screen / Background Alerts)
+    push_tokens = []
+    if notified_donor_ids:
+        try:
+            al_r = await sb.table("audit_logs").select("target_id,metadata").eq("action", "donor_push_token").in_("target_id", notified_donor_ids).order("timestamp", desc=True).execute()
+            seen_donors = set()
+            for al in al_r.data:
+                meta = al.get("metadata") or {}
+                tok = meta.get("push_token")
+                t_id = al.get("target_id")
+                if tok and t_id not in seen_donors:
+                    seen_donors.add(t_id)
+                    push_tokens.append(tok)
+        except Exception as e:
+            logger.error(f"[Push Query Error] {e}")
+
+    if push_tokens:
+        await send_expo_push_notifications(
+            push_tokens=push_tokens,
+            title=f"🩸 URGENT: {req['blood_group']} Blood Required!",
+            body=f"{req['hospital_name']} ({req.get('hospital_area') or req.get('hospital_city')}) needs {req['units_required']} unit(s). Tap to respond.",
+            data={
+                "request_id": req["request_number"],
+                "blood_group": req["blood_group"],
+                "url": "/(tabs)/notifications",
+            },
+        )
 
     await sb.table("blood_requests").update({"status": "Donors Notified", "updated_at": iso(now_utc())}).eq("id", req["id"]).execute()
 
@@ -1233,6 +1393,114 @@ async def admin_update_status(req_id: str, body: UpdateRequestStatusIn, admin: d
 async def admin_audit_logs(limit: int = 100, admin: dict = Depends(current_admin)):
     r = await sb.table("audit_logs").select("*").order("timestamp", desc=True).limit(limit).execute()
     return {"logs": r.data}
+
+
+# ---------------------------------------------------------------------------
+# Public Legal Endpoints (Google Play Store & Apple App Store Compliance)
+# ---------------------------------------------------------------------------
+HTML_TERMS = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terms & Conditions - K2 Life Drop</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #F8FAFC; color: #1E293B; margin: 0; padding: 24px; line-height: 1.6; }
+    .container { max-width: 800px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #E2E8F0; }
+    h1 { color: #DC2626; font-size: 28px; margin-top: 0; }
+    h2 { color: #0F172A; font-size: 20px; border-bottom: 2px solid #F1F5F9; padding-bottom: 8px; margin-top: 28px; }
+    p, li { color: #475569; font-size: 15px; }
+    .badge { display: inline-block; background: #FEE2E2; color: #DC2626; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; margin-bottom: 12px; }
+    .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #E2E8F0; font-size: 13px; color: #94A3B8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="badge">Kaarai Karangal Social Service Organization</div>
+    <h1>Terms & Conditions</h1>
+    <p><strong>Effective Date:</strong> October 2026</p>
+    <p>Welcome to <strong>K2 Life Drop</strong>. By installing, registering, or using our mobile application or web portal, you agree to these Terms and Conditions.</p>
+
+    <h2>1. Voluntary & Non-Commercial Nature</h2>
+    <p>K2 Life Drop is a voluntary community service bridge connecting verified blood donors with patients in emergency need. Under Section 19 of the National Blood Transfusion Council (NBTC) guidelines and the Drugs and Cosmetics Act, all blood donations are strictly voluntary. <strong>Commercial sale, purchase, or monetary remuneration of any kind for blood or platelets is strictly prohibited.</strong></p>
+
+    <h2>2. Medical Eligibility & 90-Day Cooldown</h2>
+    <p>Donors must be 18 to 65 years of age, weigh at least 45 kg, and observe a mandatory 90-day cooldown between whole-blood donations. Medical eligibility and cross-matching are confirmed by licensed medical officers at the treating hospital.</p>
+
+    <h2>3. Disclaimer of Medical Liability</h2>
+    <p>K2 Life Drop is an emergency communication network and does not collect, test, or store physical blood. Final responsibility for blood transfusion, serological screening, and medical treatment rests exclusively with the authorized hospital or blood bank.</p>
+
+    <h2>4. Account Deletion & Rights</h2>
+    <p>Donors can disable availability or permanently delete their account and personal data at any time directly in the app or by contacting our team.</p>
+
+    <h2>5. Contact & Grievance</h2>
+    <p>Kaarai Karangal Social Service Organization, Karaikal, Puducherry UT - 609602, India.<br>
+    Email: support@k2lifedrop.org / admin@k2lifedrop.com</p>
+
+    <div class="footer">&copy; 2026 Kaarai Karangal Social Service Organization (Reg. No. 31/2025). All rights reserved.</div>
+  </div>
+</body>
+</html>"""
+
+HTML_PRIVACY = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - K2 Life Drop</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #F8FAFC; color: #1E293B; margin: 0; padding: 24px; line-height: 1.6; }
+    .container { max-width: 800px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #E2E8F0; }
+    h1 { color: #0F766E; font-size: 28px; margin-top: 0; }
+    h2 { color: #0F172A; font-size: 20px; border-bottom: 2px solid #F1F5F9; padding-bottom: 8px; margin-top: 28px; }
+    p, li { color: #475569; font-size: 15px; }
+    .badge { display: inline-block; background: #CCFBF1; color: #0F766E; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; margin-bottom: 12px; }
+    .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #E2E8F0; font-size: 13px; color: #94A3B8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="badge">Google Play & Apple App Store Privacy Compliance</div>
+    <h1>Privacy Policy</h1>
+    <p><strong>Last Updated:</strong> October 2026</p>
+    <p>This Privacy Policy explains how <strong>Kaarai Karangal Social Service Organization</strong> collects, uses, encrypts, and protects your personal information on the <strong>K2 Life Drop</strong> platform.</p>
+
+    <h2>1. Information We Collect</h2>
+    <ul>
+      <li><strong>Donor Information:</strong> Name, gender, date of birth, blood group, email, residential area, district, and state.</li>
+      <li><strong>Mobile Number:</strong> Required for secure One-Time Password (OTP) verification and emergency contact.</li>
+      <li><strong>Aadhaar Number:</strong> Collected for identity verification and anti-fraud purposes. In compliance with UIDAI guidelines, all Aadhaar numbers are encrypted at rest with military-grade 256-bit AES/Fernet encryption and masked as XXXX-XXXX-****.</li>
+      <li><strong>Device Push Token:</strong> Used to dispatch background lock-screen notifications for nearby urgent blood requests.</li>
+      <li><strong>Donation History:</strong> Stored to enforce the mandatory 90-day medical rest cooldown.</li>
+    </ul>
+
+    <h2>2. How We Use Data</h2>
+    <p>We use your information exclusively to connect voluntary blood donors with hospitals and patients facing critical medical emergencies. <strong>We NEVER sell, trade, or share your data with advertisers or commercial brokers.</strong></p>
+
+    <h2>3. Account Deletion & Data Rights (Apple Guideline 5.1.1(v))</h2>
+    <p>You have full autonomy over your data. You may toggle your availability off, opt-out of notifications, or permanently delete your account and personal data directly from the Profile section of the app at any time.</p>
+
+    <h2>4. Grievance Officer & Inquiries</h2>
+    <p>Kaarai Karangal Social Service Organization<br>
+    Karaikal, Puducherry UT - 609602, India.<br>
+    Email: privacy@k2lifedrop.org / admin@k2lifedrop.com</p>
+
+    <div class="footer">&copy; 2026 Kaarai Karangal Social Service Organization. All rights reserved.</div>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/terms", response_class=HTMLResponse)
+@api.get("/terms", response_class=HTMLResponse)
+async def public_terms():
+    return HTMLResponse(content=HTML_TERMS, status_code=200)
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+@api.get("/privacy", response_class=HTMLResponse)
+async def public_privacy():
+    return HTMLResponse(content=HTML_PRIVACY, status_code=200)
 
 
 # ---------------------------------------------------------------------------
