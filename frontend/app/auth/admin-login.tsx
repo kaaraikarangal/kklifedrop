@@ -112,7 +112,11 @@ export default function AdminLogin() {
       >
         {/* Top Actions Row */}
         <View style={styles.topBarRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn} testID="back-btn">
+          <Pressable
+            onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+            style={styles.backBtn}
+            testID="back-btn"
+          >
             <Ionicons name="chevron-back" size={22} color="#0F172A" />
           </Pressable>
 
@@ -137,17 +141,17 @@ export default function AdminLogin() {
             <View style={styles.configCard}>
               <View style={styles.configHead}>
                 <Ionicons name="hardware-chip-outline" size={20} color="#0284C7" />
-                <Text style={styles.configTitle}>Backend Server Configuration</Text>
+                <Text style={styles.configTitle}>Cloud API Configuration</Text>
               </View>
               <Text style={styles.configDesc}>
-                Set the API server address that this build connects to. Works across local WiFi, emulators, and cloud servers.
+                Cloud database and serverless functions endpoint for Kaarai Karangal Life Drop.
               </Text>
 
               <Input
                 label="API Server Base URL"
                 value={inputUrl}
                 onChangeText={setInputUrl}
-                placeholder="http://10.110.3.119:8000"
+                placeholder="https://uurkvfeguglvcjqgcway.supabase.co"
                 autoCapitalize="none"
               />
 

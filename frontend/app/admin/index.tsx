@@ -450,7 +450,7 @@ export default function AdminHome() {
           <View style={[styles.systemRibbon, isMobile && { flexDirection: "column", alignItems: "flex-start", gap: 4, paddingVertical: 8, paddingHorizontal: 10 }]}>
             <View style={styles.systemIndicator}>
               <View style={styles.onlineDot} />
-              <Text style={[styles.systemStatusText, isMobile && { fontSize: 11 }]}>Database: Supabase Postgres Live</Text>
+              <Text style={[styles.systemStatusText, isMobile && { fontSize: 11 }]}>System Network: Live & Connected</Text>
             </View>
             <Text style={[styles.systemMetaText, isMobile && { fontSize: 10 }]}>Kaarai Karangal Blood Network</Text>
           </View>

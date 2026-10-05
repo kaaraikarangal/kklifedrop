@@ -43,7 +43,12 @@ export default function DonorContact() {
         <Text style={styles.doneTitle}>Request Submitted</Text>
         <Text style={styles.doneSub}>Your request has been submitted. K2 Life Drop admin will contact you shortly.</Text>
         <View style={styles.pill}><Text style={{ color: colors.brandPrimary, fontWeight: "800" }}>{done}</Text></View>
-        <Button testID="back-home-btn" label="Done" onPress={() => router.back()} style={{ marginTop: spacing.lg, alignSelf: "stretch" }} />
+        <Button
+          testID="back-home-btn"
+          label="Done"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+          style={{ marginTop: spacing.lg, alignSelf: "stretch" }}
+        />
       </View>
     );
   }
@@ -51,7 +56,12 @@ export default function DonorContact() {
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.surface }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 32 }} keyboardShouldPersistTaps="handled">
-        <Pressable onPress={() => router.back()} style={styles.back}><Ionicons name="chevron-back" size={24} color={colors.onSurface} /></Pressable>
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+          style={styles.back}
+        >
+          <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+        </Pressable>
         <View style={styles.donorCard}>
           <BloodGroupBadge group={donor.blood_group} size="lg" />
           <View style={{ flex: 1, marginLeft: 14 }}>

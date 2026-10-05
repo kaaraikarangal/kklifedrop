@@ -12,7 +12,11 @@ export default function TermsAndConditions() {
     <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       {/* Sticky Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} testID="terms-back-btn">
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+          style={styles.backBtn}
+          testID="terms-back-btn"
+        >
           <Ionicons name="chevron-back" size={22} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>Terms & Conditions</Text>

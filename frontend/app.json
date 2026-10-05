@@ -64,7 +64,7 @@
       "eas": {
         "projectId": "38b63997-abf7-4f63-b138-3cd11d911b46"
       },
-      "backendUrl": "http://10.110.3.119:8000"
+      "backendUrl": "https://uurkvfeguglvcjqgcway.supabase.co"
     }
   }
 }

@@ -60,6 +60,8 @@ fernet = MultiFernet(_valid_fernets)
 SMS_PROVIDER = os.environ.get("SMS_PROVIDER", "mock").lower()
 EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "mock").lower()
 FAST2SMS_API_KEY = os.environ.get("FAST2SMS_API_KEY", "")
+FAST2SMS_MESSAGE_ID = os.environ.get("FAST2SMS_MESSAGE_ID", "35846")
+FAST2SMS_PHONE_NUMBER_ID = os.environ.get("FAST2SMS_PHONE_NUMBER_ID", "1281701878369604")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("kk-life-drop")
@@ -193,25 +195,49 @@ async def send_fast2sms_otp(mobile: str, otp: str) -> dict:
         logger.warning("[Fast2SMS] API key not configured")
         return {"status": "error", "message": "FAST2SMS_API_KEY missing in .env"}
     clean_mobile = re.sub(r"\D", "", mobile)[-10:]
-    url = "https://www.fast2sms.com/dev/bulkV2"
     headers = {
         "authorization": FAST2SMS_API_KEY,
         "Content-Type": "application/json"
     }
-    payload = {
+
+    # 1. Try Template API via secure POST (no sensitive credentials or OTP in URL)
+    template_url = "https://www.fast2sms.com/dev/whatsapp"
+    template_payload = {
+        "message_id": FAST2SMS_MESSAGE_ID,
+        "phone_number_id": FAST2SMS_PHONE_NUMBER_ID,
+        "numbers": clean_mobile,
         "variables_values": otp,
-        "route": "otp",
-        "numbers": clean_mobile
     }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await client.post(template_url, json=template_payload, headers=headers)
             data = resp.json()
-            logger.info(f"[Fast2SMS] OTP sent to {clean_mobile}: {data}")
-            return {"status": "sent" if data.get("return") else "failed", "provider": "fast2sms", "data": data}
+            logger.info(f"[Fast2SMS WhatsApp OTP Template] {clean_mobile}: {data}")
+            if data.get("return") is True:
+                return {"status": "sent", "provider": "fast2sms_whatsapp", "data": data}
+            logger.warning(f"[Fast2SMS WhatsApp] Template API rejected, trying session API: {data}")
     except Exception as e:
-        logger.error(f"[Fast2SMS] Error sending OTP to {clean_mobile}: {e}")
-        return {"status": "error", "error": str(e), "provider": "fast2sms"}
+        logger.error(f"[Fast2SMS WhatsApp OTP Template] Error sending to {clean_mobile}: {e}")
+
+    # 2. Fallback: Session API via secure POST
+    session_url = "https://www.fast2sms.com/dev/whatsapp-session"
+    session_payload = {
+        "phone_number_id": FAST2SMS_PHONE_NUMBER_ID,
+        "to": clean_mobile,
+        "type": "text",
+        "text": f"{otp} is your verification code. For your security, do not share this code.",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(session_url, json=session_payload, headers=headers)
+            data = resp.json()
+            logger.info(f"[Fast2SMS WhatsApp OTP Session] {clean_mobile}: {data}")
+            if data.get("return") is True:
+                return {"status": "sent", "provider": "fast2sms_whatsapp", "data": data}
+            return {"status": "failed", "provider": "fast2sms_whatsapp", "data": data}
+    except Exception as e:
+        logger.error(f"[Fast2SMS WhatsApp OTP Session] Error sending to {clean_mobile}: {e}")
+        return {"status": "error", "error": str(e), "provider": "fast2sms_whatsapp"}
 
 
 async def send_fast2sms_message(mobile: str, message: str) -> dict:
@@ -653,57 +679,60 @@ async def public_stats():
 
 @api.post("/auth/send-otp")
 async def send_otp(body: SendOtpIn):
+    clean_mobile = re.sub(r"\D", "", body.mobile)[-10:]
+    if len(clean_mobile) != 10:
+        raise HTTPException(400, "Enter a valid 10-digit mobile number")
+
     cutoff = iso(now_utc() - timedelta(minutes=10))
-    q = sb.table("otps").select("id", count="exact").eq("mobile", body.mobile).gte("created_at", cutoff)
+    q = sb.table("otps").select("id", count="exact").eq("mobile", clean_mobile).gte("created_at", cutoff)
     r = await q.limit(0).execute()
-    if (r.count or 0) >= 3:
+    if (r.count or 0) >= 6:
         raise HTTPException(429, "Too many OTP requests. Try again later.")
 
     otp = "".join(random.choices(string.digits, k=OTP_LENGTH))
     await sb.table("otps").insert({
         "id": gen_id(),
-        "mobile": body.mobile,
+        "mobile": clean_mobile,
         "otp_hash": hash_pw(otp),
         "attempts": 0,
         "verified": False,
         "expires_at": iso(now_utc() + timedelta(minutes=OTP_EXP_MINUTES)),
         "created_at": iso(now_utc()),
     }).execute()
-    sms_res = await send_sms(body.mobile, f"Your KK Life Drop OTP is {otp}. Valid {OTP_EXP_MINUTES} minutes.", otp=otp)
+    sms_res = await send_sms(clean_mobile, f"Your KK Life Drop OTP is {otp}. Valid {OTP_EXP_MINUTES} minutes.", otp=otp)
     if SMS_PROVIDER == "fast2sms":
         if sms_res.get("status") != "sent":
             data = sms_res.get("data") or {}
-            msg = data.get("message") or sms_res.get("error") or "Failed to send SMS via Fast2SMS gateway"
+            msg = data.get("message") or sms_res.get("error") or "Failed to send verification code via WhatsApp"
             logger.error(f"[Fast2SMS Live Error] {msg}")
-            raise HTTPException(502, f"Fast2SMS Gateway Error: {msg}")
-        return {"ok": True, "mobile": body.mobile, "expires_in_minutes": OTP_EXP_MINUTES, "message": "OTP sent via Fast2SMS"}
+            raise HTTPException(502, f"Gateway Error: {msg}")
+        return {"ok": True, "mobile": clean_mobile, "expires_in_minutes": OTP_EXP_MINUTES, "message": "Verification code sent to your WhatsApp successfully"}
 
-    resp = {
+    return {
         "ok": True,
-        "mobile": body.mobile,
+        "mobile": clean_mobile,
         "expires_in_minutes": OTP_EXP_MINUTES,
-        "sms_provider": SMS_PROVIDER,
+        "message": "Verification code dispatched successfully",
     }
-    if SMS_PROVIDER == "mock":
-        resp["dev_otp"] = otp
-    return resp
 
 
 @api.post("/auth/verify-otp")
 async def verify_otp(body: VerifyOtpIn):
-    r = await sb.table("otps").select("*").eq("mobile", body.mobile).eq("verified", False).order("created_at", desc=True).limit(1).execute()
+    clean_mobile = re.sub(r"\D", "", body.mobile)[-10:]
+    r = await sb.table("otps").select("*").eq("mobile", clean_mobile).eq("verified", False).order("created_at", desc=True).limit(1).execute()
     if not r.data:
-        raise HTTPException(400, "No OTP found. Request a new one.")
+        raise HTTPException(400, "No pending verification code found. Request a new code.")
     rec = r.data[0]
     if (as_utc(rec["expires_at"]) or now_utc()) < now_utc():
-        raise HTTPException(400, "OTP expired. Request a new one.")
+        raise HTTPException(400, "Verification code expired. Request a new code.")
     if rec["attempts"] >= OTP_MAX_ATTEMPTS:
-        raise HTTPException(429, "Too many attempts. Request a new OTP.")
+        raise HTTPException(429, "Too many attempts. Request a new code.")
 
     await sb.table("otps").update({"attempts": rec["attempts"] + 1}).eq("id", rec["id"]).execute()
-    is_valid = verify_pw(body.otp, rec["otp_hash"]) or body.otp == "123456"
+    is_valid = verify_pw(body.otp, rec["otp_hash"])
     if not is_valid:
-        raise HTTPException(400, "Invalid OTP")
+        remaining = max(0, OTP_MAX_ATTEMPTS - (rec["attempts"] + 1))
+        raise HTTPException(400, f"Invalid code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.")
     await sb.table("otps").update({"verified": True}).eq("id", rec["id"]).execute()
 
     d = await sb.table("donors").select("*").eq("mobile", body.mobile).execute()

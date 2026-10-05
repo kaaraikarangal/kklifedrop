@@ -58,7 +58,12 @@ export default function RequestBlood() {
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.surface }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 32 }} keyboardShouldPersistTaps="handled">
-        <Pressable onPress={() => router.back()} style={styles.back}><Ionicons name="chevron-back" size={24} color={colors.onSurface} /></Pressable>
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+          style={styles.back}
+        >
+          <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+        </Pressable>
         <Text style={styles.title}>Request Blood</Text>
         <Text style={styles.sub}>We'll notify eligible donors and coordinate via our admin team.</Text>
 

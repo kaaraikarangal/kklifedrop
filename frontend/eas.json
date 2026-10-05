@@ -13,7 +13,11 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "http://10.110.3.119:8000"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://uurkvfeguglvcjqgcway.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_N9vaiLh_RNCgb9xN6Ec1gw_XHoQ9TEG",
+        "EXPO_PUBLIC_FAST2SMS_API_KEY": "rO09Unsxw1b7cXI4fZE3YvQWSACLFNoMtB26hezkymDPdgjlJimuenxOJjTL3Mhq2atf5IlyB8wG6r4D",
+        "EXPO_PUBLIC_FAST2SMS_MESSAGE_ID": "35846",
+        "EXPO_PUBLIC_FAST2SMS_PHONE_NUMBER_ID": "1281701878369604"
       }
     },
     "production": {
@@ -21,7 +25,11 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "http://10.110.3.119:8000"
+        "EXPO_PUBLIC_SUPABASE_URL": "https://uurkvfeguglvcjqgcway.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_N9vaiLh_RNCgb9xN6Ec1gw_XHoQ9TEG",
+        "EXPO_PUBLIC_FAST2SMS_API_KEY": "rO09Unsxw1b7cXI4fZE3YvQWSACLFNoMtB26hezkymDPdgjlJimuenxOJjTL3Mhq2atf5IlyB8wG6r4D",
+        "EXPO_PUBLIC_FAST2SMS_MESSAGE_ID": "35846",
+        "EXPO_PUBLIC_FAST2SMS_PHONE_NUMBER_ID": "1281701878369604"
       }
     }
   },

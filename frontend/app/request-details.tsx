@@ -20,7 +20,12 @@ export default function RequestDetails() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.surface }} contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }}>
-      <Pressable onPress={() => router.back()} style={styles.back}><Ionicons name="chevron-back" size={24} color={colors.onSurface} /></Pressable>
+      <Pressable
+        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+        style={styles.back}
+      >
+        <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+      </Pressable>
       <View style={styles.header}>
         <BloodGroupBadge group={r.blood_group} size="lg" />
         <View style={{ flex: 1, marginLeft: 14 }}>
