@@ -1,7 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "./api";
 
-const READ_NOTIFS_KEY = "k2_read_notification_ids";
+const READ_NOTIFS_KEY = "kk_read_notification_ids";
+const LEGACY_READ_NOTIFS_KEY = "k2_read_notification_ids";
 
 type Listener = (count: number) => void;
 const listeners = new Set<Listener>();
@@ -41,7 +42,7 @@ export function notifyPendingCountChanged(count: number) {
 
 export async function getReadNotificationIds(): Promise<string[]> {
   try {
-    const raw = await AsyncStorage.getItem(READ_NOTIFS_KEY);
+    const raw = (await AsyncStorage.getItem(READ_NOTIFS_KEY)) || (await AsyncStorage.getItem(LEGACY_READ_NOTIFS_KEY));
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];

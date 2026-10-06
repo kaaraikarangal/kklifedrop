@@ -3,10 +3,11 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { api, getToken } from "./api";
+import { api, getToken, MOBILE_KEY } from "./api";
 import { refreshPendingNotifications } from "./pending-notifications";
 
-export const PUSH_TOKEN_KEY = "k2_push_token";
+export const PUSH_TOKEN_KEY = "kk_push_token";
+export const LEGACY_PUSH_TOKEN_KEY = "k2_push_token";
 export const EMERGENCY_CHANNEL_ID = "emergency-blood-alerts";
 export const GENERAL_CHANNEL_ID = "general-blood-alerts";
 
@@ -100,7 +101,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 
       // Attempt immediate sync with backend if user has an active session or mobile
       const userToken = await getToken();
-      const mobile = await AsyncStorage.getItem("k2_mobile");
+      const mobile = (await AsyncStorage.getItem(MOBILE_KEY)) || (await AsyncStorage.getItem("k2_mobile"));
       if (userToken || mobile) {
         try {
           await api("/donors/push-token", {

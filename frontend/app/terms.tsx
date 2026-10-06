@@ -108,7 +108,7 @@ export default function TermsAndConditions() {
             <Text style={styles.contactText}>Helpline: +91 9750807463</Text>
           </View>
 
-          <SectionTitle number="8" title="Technical Engineering & Developer Information" />
+          <SectionTitle number="8" title="Developer Information" />
           <Text style={styles.p}>
             Application engineered and maintained by:
           </Text>

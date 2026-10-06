@@ -8,13 +8,19 @@ import {
   SUPABASE_URL,
 } from "./supabase";
 
-export const TOKEN_KEY = "k2_token";
-export const ROLE_KEY = "k2_role";
-export const DONOR_KEY = "k2_donor";
-export const MOBILE_KEY = "k2_mobile";
-export const ADMIN_USER_KEY = "k2_admin_user";
+export const TOKEN_KEY = "kk_token";
+export const ROLE_KEY = "kk_role";
+export const DONOR_KEY = "kk_donor";
+export const MOBILE_KEY = "kk_mobile";
+export const ADMIN_USER_KEY = "kk_admin_user";
 export const SUPER_ADMIN_EMAIL = "kaaraikarangal@gmail.com";
-export const BACKEND_URL_KEY = "k2_backend_url";
+export const BACKEND_URL_KEY = "kk_backend_url";
+
+export const LEGACY_TOKEN_KEY = "k2_token";
+export const LEGACY_ROLE_KEY = "k2_role";
+export const LEGACY_DONOR_KEY = "k2_donor";
+export const LEGACY_MOBILE_KEY = "k2_mobile";
+export const LEGACY_ADMIN_USER_KEY = "k2_admin_user";
 
 export const ORG_CONTACT = {
   name: "Kaarai Karangal Social Service Organization",
@@ -79,7 +85,9 @@ export async function testBackendConnection(_targetUrl?: string): Promise<{ ok: 
 }
 
 export async function getToken(): Promise<string | null> {
-  return AsyncStorage.getItem(TOKEN_KEY);
+  const t = await AsyncStorage.getItem(TOKEN_KEY);
+  if (t) return t;
+  return AsyncStorage.getItem(LEGACY_TOKEN_KEY);
 }
 
 export async function setSession(token: string, role: "user" | "admin", mobile?: string) {
@@ -91,11 +99,64 @@ export async function setSession(token: string, role: "user" | "admin", mobile?:
 }
 
 export async function clearSession() {
-  await AsyncStorage.multiRemove([TOKEN_KEY, ROLE_KEY, DONOR_KEY, MOBILE_KEY, ADMIN_USER_KEY]);
+  await AsyncStorage.multiRemove([
+    TOKEN_KEY,
+    ROLE_KEY,
+    DONOR_KEY,
+    MOBILE_KEY,
+    ADMIN_USER_KEY,
+    LEGACY_TOKEN_KEY,
+    LEGACY_ROLE_KEY,
+    LEGACY_DONOR_KEY,
+    LEGACY_MOBILE_KEY,
+    LEGACY_ADMIN_USER_KEY,
+  ]);
 }
 
 export async function getRole(): Promise<string | null> {
-  return AsyncStorage.getItem(ROLE_KEY);
+  const r = await AsyncStorage.getItem(ROLE_KEY);
+  if (r) return r;
+  return AsyncStorage.getItem(LEGACY_ROLE_KEY);
+}
+
+/**
+ * Strict Security Guard: Ensures caller holds an authenticated administrator session token.
+ * Prevents unauthorized escalation or tampering with admin endpoints.
+ */
+export async function requireAdminAuth(): Promise<{ id: string; email: string; is_super_admin: boolean }> {
+  const [token, legToken, role, legRole, adminStr, legAdminStr] = await Promise.all([
+    AsyncStorage.getItem(TOKEN_KEY),
+    AsyncStorage.getItem(LEGACY_TOKEN_KEY),
+    AsyncStorage.getItem(ROLE_KEY),
+    AsyncStorage.getItem(LEGACY_ROLE_KEY),
+    AsyncStorage.getItem(ADMIN_USER_KEY),
+    AsyncStorage.getItem(LEGACY_ADMIN_USER_KEY),
+  ]);
+
+  const activeToken = token || legToken;
+  const activeRole = role || legRole;
+  const activeAdminStr = adminStr || legAdminStr;
+
+  if (activeRole !== "admin" || !activeToken || !activeAdminStr) {
+    throw new Error("Access Denied: Administrator authentication required.");
+  }
+
+  let adminUser: any = null;
+  try {
+    adminUser = JSON.parse(activeAdminStr);
+  } catch {
+    throw new Error("Access Denied: Invalid administrator session.");
+  }
+
+  if (!adminUser || !adminUser.email) {
+    throw new Error("Access Denied: Administrator identity missing.");
+  }
+
+  const isSuperAdmin = Boolean(
+    adminUser.is_super_admin || adminUser.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
+  );
+
+  return { id: adminUser.id, email: adminUser.email, is_super_admin: isSuperAdmin };
 }
 
 export interface ActiveSession {
@@ -109,44 +170,65 @@ export interface ActiveSession {
 
 export async function getActiveSession(): Promise<ActiveSession> {
   try {
-    const [token, role, mobile, donorStr, adminUserStr] = await Promise.all([
+    const [
+      token,
+      role,
+      mobile,
+      donorStr,
+      adminUserStr,
+      legToken,
+      legRole,
+      legMobile,
+      legDonorStr,
+      legAdminUserStr,
+    ] = await Promise.all([
       AsyncStorage.getItem(TOKEN_KEY),
       AsyncStorage.getItem(ROLE_KEY),
       AsyncStorage.getItem(MOBILE_KEY),
       AsyncStorage.getItem(DONOR_KEY),
       AsyncStorage.getItem(ADMIN_USER_KEY),
+      AsyncStorage.getItem(LEGACY_TOKEN_KEY),
+      AsyncStorage.getItem(LEGACY_ROLE_KEY),
+      AsyncStorage.getItem(LEGACY_MOBILE_KEY),
+      AsyncStorage.getItem(LEGACY_DONOR_KEY),
+      AsyncStorage.getItem(LEGACY_ADMIN_USER_KEY),
     ]);
 
+    const activeToken = token || legToken;
+    const activeRole = role || legRole;
+    const activeMobile = mobile || legMobile;
+    const activeDonorStr = donorStr || legDonorStr;
+    const activeAdminUserStr = adminUserStr || legAdminUserStr;
+
     // Explicit Admin session
-    if (role === "admin" && token) {
+    if (activeRole === "admin" && activeToken) {
       let isSuperAdmin = false;
-      if (adminUserStr) {
+      if (activeAdminUserStr) {
         try {
-          const parsed = JSON.parse(adminUserStr);
+          const parsed = JSON.parse(activeAdminUserStr);
           isSuperAdmin = Boolean(parsed?.is_super_admin || parsed?.email?.toLowerCase() === SUPER_ADMIN_EMAIL);
         } catch {}
       }
-      return { isLoggedIn: true, role: "admin", mobile: null, donorId: null, token, isSuperAdmin };
+      return { isLoggedIn: true, role: "admin", mobile: null, donorId: null, token: activeToken, isSuperAdmin };
     }
 
-
     // Active User / Donor session:
-    // If ANY of (token, mobile, donorStr) is present, the user has an active session
-    if (token || mobile || donorStr) {
+    // If ANY of (activeToken, activeMobile, activeDonorStr) is present, the user has an active session
+    if (activeToken || activeMobile || activeDonorStr) {
       let donorId: string | null = null;
-      if (donorStr) {
+      if (activeDonorStr) {
         try {
-          const parsed = JSON.parse(donorStr);
+          const parsed = JSON.parse(activeDonorStr);
           donorId = parsed?.id || null;
         } catch {}
       }
 
       // Self-heal session tokens and role in AsyncStorage if any key was missing
       const healingPairs: [string, string][] = [];
-      if (!token) {
-        healingPairs.push([TOKEN_KEY, `user_session_${mobile || "active"}`]);
+      if (!activeToken) {
+        healingPairs.push([TOKEN_KEY, `user_session_${activeMobile || "active"}`]);
       }
-      if (role !== "user") {
+      if (activeRole !== "user") {
         healingPairs.push([ROLE_KEY, "user"]);
       }
       if (healingPairs.length > 0) {
@@ -156,9 +238,9 @@ export async function getActiveSession(): Promise<ActiveSession> {
       return {
         isLoggedIn: true,
         role: "user",
-        mobile: mobile || null,
+        mobile: activeMobile || null,
         donorId,
-        token: token || `user_session_${mobile || "active"}`,
+        token: activeToken || `user_session_${activeMobile || "active"}`,
       };
     }
 
@@ -486,36 +568,31 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       throw new Error("Security alert: Too many OTP requests. Please wait 10 minutes before requesting again.");
     }
 
-    // Reuse unexpired OTP within 45 seconds to avoid spam
+    // Anti-flood rate limiting: Must wait 45 seconds between requests
     const fortyFiveSecsAgo = new Date(Date.now() - 45 * 1000).toISOString();
-    const { data: recentOtps } = await supabase
+    const { count: immediateCount } = await supabase
       .from("otps")
-      .select("*")
+      .select("id", { count: "exact", head: true })
       .eq("mobile", cleanMobile)
-      .eq("verified", false)
-      .gte("created_at", fortyFiveSecsAgo)
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .gte("created_at", fortyFiveSecsAgo);
 
-    let otp = "";
-    let expiresAt = "";
-
-    if (recentOtps && recentOtps.length > 0) {
-      otp = recentOtps[0].otp_hash;
-      expiresAt = recentOtps[0].expires_at;
-    } else {
-      // 6-digit cryptographically random OTP
-      otp = Math.floor(100000 + Math.random() * 900000).toString();
-      expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-
-      await supabase.from("otps").insert({
-        mobile: cleanMobile,
-        otp_hash: otp,
-        attempts: 0,
-        verified: false,
-        expires_at: expiresAt,
-      });
+    if ((immediateCount || 0) > 0) {
+      throw new Error("Please wait 45 seconds before requesting another code.");
     }
+
+    // 6-digit cryptographically random OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    // Securely hash OTP before database storage (never store plaintext OTP in database)
+    const otpHash = bcrypt.hashSync(otp, 8);
+
+    await supabase.from("otps").insert({
+      mobile: cleanMobile,
+      otp_hash: otpHash,
+      attempts: 0,
+      verified: false,
+      expires_at: expiresAt,
+    });
 
     // Call Fast2SMS WhatsApp endpoint via secure POST (template → session fallback)
     const waResult = await sendWhatsAppOtp(cleanMobile, otp);
@@ -641,7 +718,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       .limit(1);
 
     const donorDoc = donorRecords && donorRecords.length > 0 ? donorRecords[0] : null;
-    const sessionToken = `k2_usr_${cleanMobile}_${Date.now()}`;
+    const sessionToken = `kk_usr_${cleanMobile}_${Date.now()}`;
 
     await setSession(sessionToken, "user", cleanMobile);
     if (donorDoc) {
@@ -688,7 +765,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     const isSuperAdmin = email === SUPER_ADMIN_EMAIL.toLowerCase();
     const adminRole = isSuperAdmin ? "super_admin" : "sub_admin";
-    const adminToken = `k2_adm_${admin.id}_${Date.now()}`;
+    const adminToken = `kk_adm_${admin.id}_${Date.now()}`;
     await setSession(adminToken, "admin");
 
     const adminUser = {
@@ -1012,8 +1089,9 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     } as unknown as T;
   }
 
-  // 13. Matching Donors for Blood Request
+  // 13. Matching Donors for Blood Request (Admin only)
   if (route.includes("/matching-donors")) {
+    await requireAdminAuth();
     const reqId = route.split("/")[1];
     const { data: request } = await supabase.from("blood_requests").select("*").eq("id", reqId).single();
     if (!request) throw new Error("Blood request not found");
@@ -1058,8 +1136,9 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     } as unknown as T;
   }
 
-  // 14. Notify Donors for Blood Request
+  // 14. Notify Donors for Blood Request (Admin only)
   if (route.includes("/notify") && method === "POST") {
+    await requireAdminAuth();
     const parts = route.replace(/^api\//, "").split("/");
     const reqId = parts[1];
     let donorIds: string[] = body.donor_ids || [];
@@ -1296,6 +1375,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 18. Admin Stats
   if (route === "admin/stats" || route === "api/admin/stats") {
+    await requireAdminAuth();
     const { count: total_donors } = await supabase.from("donors").select("id", { count: "exact", head: true }).eq("status", "active");
     const { count: available } = await supabase.from("donors").select("id", { count: "exact", head: true }).eq("status", "active").eq("availability", "Available");
     const { count: total_requests } = await supabase.from("blood_requests").select("id", { count: "exact", head: true });
@@ -1331,6 +1411,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 19. Admin Donors
   if (route === "admin/donors" || route === "api/admin/donors") {
+    await requireAdminAuth();
     const { data, error } = await supabase
       .from("donors")
       .select("*")
@@ -1342,8 +1423,9 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     return { donors: adminDonors, count: adminDonors.length } as unknown as T;
   }
 
-  // 20. Admin Reveal Aadhaar
+  // 20. Admin Reveal Aadhaar (Strictly requires authenticated admin session)
   if (route.includes("/aadhaar") && (route.includes("admin/donors") || route.includes("donors/"))) {
+    await requireAdminAuth();
     const match = route.match(/donors\/([^/]+)\/aadhaar/);
     const donorId = match ? match[1] : "";
     try {
@@ -1382,6 +1464,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 21. Admin Update Donor Status & Rekey Aadhaar
   if (route.startsWith("admin/donors/") || route.startsWith("api/admin/donors/")) {
+    await requireAdminAuth();
     const donorId = route.replace(/^(api\/)?admin\/donors\//, "");
     const updates: any = {};
     if (body.status) updates.status = body.status;
@@ -1409,6 +1492,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 22. Admin Blood Request Status Update
   if (route.includes("admin/blood-requests") && route.endsWith("/status")) {
+    await requireAdminAuth();
     const parts = route.split("/");
     const reqId = parts[parts.length - 2];
     await supabase.from("blood_requests").update({ status: body.status }).eq("id", reqId);
@@ -1417,6 +1501,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 23. Admin Notifications History
   if (route === "admin/notifications" || route === "api/admin/notifications") {
+    await requireAdminAuth();
     const { data } = await supabase
       .from("notifications")
       .select("*, blood_requests(*)")
@@ -1495,21 +1580,20 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 24. Admin Audit Logs
   if (route === "admin/audit-logs" || route === "api/admin/audit-logs") {
+    await requireAdminAuth();
     const { data } = await supabase.from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(150);
     return { logs: data || [] } as unknown as T;
   }
 
   // 25. Admin Profile / Current Admin
   if (route === "admin/me" || route === "api/admin/me") {
+    const admin = await requireAdminAuth();
     let currentAdmin: any = null;
-    const rawAdm = await AsyncStorage.getItem(ADMIN_USER_KEY);
+    const rawAdm = (await AsyncStorage.getItem(ADMIN_USER_KEY)) || (await AsyncStorage.getItem(LEGACY_ADMIN_USER_KEY));
     if (rawAdm) {
       try { currentAdmin = JSON.parse(rawAdm); } catch {}
     }
-    if (!currentAdmin || !currentAdmin.email) {
-      throw new Error("Admin authentication required. Please sign in.");
-    }
-    return { ok: true, admin: currentAdmin } as unknown as T;
+    return { ok: true, admin: currentAdmin || admin } as unknown as T;
   }
 
   // 26. Sub-Admins Management (Super Admin Exclusive)

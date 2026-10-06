@@ -3,7 +3,7 @@
  * Lock-screen and background push notifications run natively on Android/iOS via notifications.ts
  */
 
-export const PUSH_TOKEN_KEY = "k2_push_token";
+export const PUSH_TOKEN_KEY = "kk_push_token";
 export const EMERGENCY_CHANNEL_ID = "emergency-blood-alerts";
 export const GENERAL_CHANNEL_ID = "general-blood-alerts";
 

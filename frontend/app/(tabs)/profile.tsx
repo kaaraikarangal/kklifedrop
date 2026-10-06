@@ -160,6 +160,18 @@ export default function Profile() {
         <Ionicons name="chevron-forward" size={18} color={colors.muted} />
       </Pressable>
 
+      <Pressable
+        testID="developer-row"
+        style={styles.navRow}
+        onPress={() => router.push("/developer")}
+      >
+        <View style={styles.navRowLeft}>
+          <Ionicons name="code-slash-outline" size={18} color={colors.onSurface} />
+          <Text style={styles.navRowTitle}>Developer Information</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </Pressable>
+
       <Text style={styles.section}>Official Contact & Helpline</Text>
       <View style={styles.orgContactCard}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -183,49 +195,6 @@ export default function Profile() {
           >
             <Ionicons name="mail" size={13} color="#0F172A" />
             <Text style={[styles.contactActionBtnText, { color: "#0F172A" }]}>Email</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <Text style={styles.section}>Developer Information</Text>
-      <View style={styles.devCard}>
-        <View style={styles.devHeader}>
-          <View style={styles.devAvatar}>
-            <Ionicons name="code-slash" size={20} color="#0284C7" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.devName}>Barathraj S</Text>
-            <Text style={styles.devRole}>Software Engineer</Text>
-          </View>
-        </View>
-
-        <Text style={styles.devDesc}>
-          Lead developer & architect of the KK Life Drop platform.
-        </Text>
-
-        <View style={styles.devButtonsRow}>
-          <Pressable
-            style={styles.devActionPrimary}
-            onPress={() => Linking.openURL("https://barathraj.web.app/")}
-          >
-            <Ionicons name="globe-outline" size={13} color="#FFFFFF" />
-            <Text style={styles.devActionPrimaryText}>Portfolio Website</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.devActionSecondary}
-            onPress={() => Linking.openURL("tel:7867009044")}
-          >
-            <Ionicons name="call-outline" size={13} color="#0284C7" />
-            <Text style={styles.devActionSecondaryText}>7867009044</Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.devActionSecondary}
-            onPress={() => Linking.openURL("mailto:jcibarathraj@gmail.com")}
-          >
-            <Ionicons name="mail-outline" size={13} color="#0284C7" />
-            <Text style={styles.devActionSecondaryText}>Email</Text>
           </Pressable>
         </View>
       </View>
@@ -254,22 +223,11 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   navRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10 },
-  navRowLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  navRowLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, marginRight: 8 },
   navRowTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   orgContactCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10, borderWidth: 1, borderColor: colors.border },
   contactActionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.brandPrimary, paddingVertical: 8, paddingHorizontal: 12, borderRadius: radius.pill },
   contactActionBtnText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
-  devCard: { backgroundColor: "#F0F9FF", borderRadius: radius.md, padding: spacing.md, marginBottom: 10, borderWidth: 1, borderColor: "#BAE6FD" },
-  devHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 },
-  devAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#E0F2FE", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#BAE6FD" },
-  devName: { fontSize: 15, fontWeight: "800", color: "#0369A1" },
-  devRole: { fontSize: 12, fontWeight: "600", color: "#0284C7" },
-  devDesc: { fontSize: 12, color: "#64748B", marginBottom: 10, lineHeight: 17 },
-  devButtonsRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
-  devActionPrimary: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "#0284C7", paddingVertical: 7, paddingHorizontal: 12, borderRadius: radius.pill },
-  devActionPrimaryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
-  devActionSecondary: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "#FFFFFF", paddingVertical: 7, paddingHorizontal: 12, borderRadius: radius.pill, borderWidth: 1, borderColor: "#BAE6FD" },
-  devActionSecondaryText: { color: "#0369A1", fontSize: 12, fontWeight: "700" },
   logout: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md },
   deleteBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, borderWidth: 1, borderColor: "#FCA5A5", borderRadius: radius.md, backgroundColor: "#FEF2F2" },
   testPushRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FECACA", borderRadius: radius.md, padding: 12, marginBottom: 10 },

@@ -616,7 +616,7 @@ async def on_start():
                 "id": gen_id(),
                 "email": admin_email,
                 "password_hash": hash_pw(admin_pw),
-                "name": "K2 Admin",
+                "name": "KK Admin",
                 "status": "active",
                 "created_at": iso(now_utc()),
             }).execute()

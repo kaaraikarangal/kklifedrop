@@ -404,7 +404,7 @@ export default function Landing() {
 
           <Pressable
             style={styles.devCreditRow}
-            onPress={() => Linking.openURL("https://barathraj.web.app/")}
+            onPress={() => router.push("/developer")}
             testID="landing-developer-btn"
           >
             <Ionicons name="code-slash" size={13} color="#0284C7" />

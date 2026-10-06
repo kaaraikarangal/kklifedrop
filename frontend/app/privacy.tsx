@@ -110,9 +110,9 @@ export default function PrivacyPolicy() {
             <Text style={styles.contactText}>Phone / Helpline: +91 9750807463</Text>
           </View>
 
-          <SectionTitle number="8" title="Technical Architecture & Developer Information" />
+          <SectionTitle number="8" title="Developer Information" />
           <Text style={styles.p}>
-            For technical inquiries, system architecture, or security disclosures:
+            For technical inquiries or developer support:
           </Text>
           <View style={[styles.contactBox, { backgroundColor: "#F0F9FF", borderColor: "#BAE6FD" }]}>
             <Text style={[styles.contactTitle, { color: "#0284C7" }]}>Barathraj S</Text>
