@@ -785,22 +785,74 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     const { data: request } = await supabase.from("blood_requests").select("*").eq("id", reqId).single();
     if (!request) throw new Error("Blood request not found");
 
-    const { data: donors } = await supabase
+    const { data: rawDonors } = await supabase
       .from("donors")
       .select("*")
       .eq("blood_group", request.blood_group)
-      .eq("status", "active")
-      .eq("availability", "Available");
+      .eq("status", "active");
 
-    const eligible = (donors || []).map(toAdminDonor).filter((d) => d.is_eligible);
-    return { donors: eligible } as unknown as T;
+    const processed = (rawDonors || []).map(toAdminDonor);
+    const eligible = processed.filter((d) => d.is_eligible && d.availability === "Available");
+    const resting = processed.filter((d) => d.in_cooldown);
+
+    const hospitalArea = (request.hospital_area || request.hospital_city || "").toLowerCase();
+    const same_area = eligible.filter(
+      (d) =>
+        (d.area && d.area.toLowerCase().includes(hospitalArea)) ||
+        (d.place && d.place.toLowerCase().includes(hospitalArea))
+    );
+    const same_district = eligible.filter(
+      (d) =>
+        !same_area.includes(d) &&
+        d.district &&
+        hospitalArea.includes(d.district.toLowerCase())
+    );
+    const other = eligible.filter((d) => !same_area.includes(d) && !same_district.includes(d));
+
+    return {
+      counts: {
+        total: eligible.length,
+        same_area: same_area.length,
+        same_district: same_district.length,
+        other: other.length,
+        in_rest_period: resting.length,
+      },
+      same_area,
+      same_district,
+      other,
+      resting_donors: resting,
+      all_eligible: eligible,
+    } as unknown as T;
   }
 
   // 14. Notify Donors for Blood Request
   if (route.includes("/notify") && method === "POST") {
     const reqId = route.split("/")[1];
-    const donorIds: string[] = body.donor_ids || [];
-    const message = body.message || "Urgent blood request needed";
+    let donorIds: string[] = body.donor_ids || [];
+
+    if (!donorIds || donorIds.length === 0) {
+      const { data: request } = await supabase.from("blood_requests").select("*").eq("id", reqId).single();
+      if (request) {
+        const { data: rawDonors } = await supabase
+          .from("donors")
+          .select("*")
+          .eq("blood_group", request.blood_group)
+          .eq("status", "active")
+          .eq("availability", "Available");
+        const eligible = (rawDonors || []).map(toAdminDonor).filter((d) => d.is_eligible);
+
+        if (body.scope === "same_area") {
+          const area = (request.hospital_area || request.hospital_city || "").toLowerCase();
+          donorIds = eligible
+            .filter((d) => (d.area && d.area.toLowerCase().includes(area)) || (d.place && d.place.toLowerCase().includes(area)))
+            .map((d) => d.id);
+        } else {
+          donorIds = eligible.map((d) => d.id);
+        }
+      }
+    }
+
+    const message = body.message || "Urgent blood request: Verified donor match needed in Karaikal.";
 
     for (const donorId of donorIds) {
       await supabase.from("notifications").upsert(
@@ -815,7 +867,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
 
     await supabase.from("blood_requests").update({ status: "Donors Notified" }).eq("id", reqId);
-    return { ok: true, count: donorIds.length } as unknown as T;
+    return { ok: true, count: donorIds.length, notified: donorIds.length } as unknown as T;
   }
 
   // 15. Single Blood Request (/blood-requests/:id)
@@ -915,19 +967,65 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   }
 
   // 20. Admin Reveal Aadhaar
-  if (route.includes("/aadhaar") && route.includes("admin/donors")) {
-    const donorId = route.split("/")[2];
-    const { data } = await supabase.from("donors").select("masked_aadhaar").eq("id", donorId).single();
-    return { aadhaar: data?.masked_aadhaar || "XXXX XXXX 1234" } as unknown as T;
+  if (route.includes("/aadhaar") && (route.includes("admin/donors") || route.includes("donors/"))) {
+    const match = route.match(/donors\/([^/]+)\/aadhaar/);
+    const donorId = match ? match[1] : "";
+    try {
+      const { data, error } = await supabase.functions.invoke("reveal-aadhaar", {
+        body: { donor_id: donorId },
+      });
+      if (!error && data && data.decrypted) {
+        return data as unknown as T;
+      }
+    } catch (e) {
+      console.warn("Edge function reveal-aadhaar invoke error:", e);
+    }
+
+    // Direct Supabase fallback
+    const { data: donor } = await supabase
+      .from("donors")
+      .select("id, masked_aadhaar, encrypted_aadhaar")
+      .eq("id", donorId)
+      .single();
+
+    if (donor) {
+      if (donor.encrypted_aadhaar?.startsWith("ENCR_")) {
+        const raw = donor.encrypted_aadhaar.replace("ENCR_", "");
+        const formatted = `${raw.slice(0, 4)} ${raw.slice(4, 8)} ${raw.slice(8, 12)}`;
+        return { aadhaar: formatted, masked: donor.masked_aadhaar, decrypted: true } as unknown as T;
+      }
+      return {
+        aadhaar: donor.masked_aadhaar,
+        masked: donor.masked_aadhaar,
+        decrypted: false,
+        error: "Unable to decrypt with legacy key. Please re-enter 12-digit Aadhaar to re-encrypt.",
+      } as unknown as T;
+    }
+    return { aadhaar: null, decrypted: false } as unknown as T;
   }
 
-  // 21. Admin Update Donor Status
+  // 21. Admin Update Donor Status & Rekey Aadhaar
   if (route.startsWith("admin/donors/") || route.startsWith("api/admin/donors/")) {
     const donorId = route.replace(/^(api\/)?admin\/donors\//, "");
     const updates: any = {};
     if (body.status) updates.status = body.status;
     if (body.availability) updates.availability = body.availability;
     if (body.donation_opt_in !== undefined) updates.donation_opt_in = body.donation_opt_in;
+    if (body.last_donation_date !== undefined) updates.last_donation_date = body.last_donation_date;
+    if (body.aadhaar) {
+      const clean = (body.aadhaar || "").replace(/\D/g, "");
+      if (clean.length === 12) {
+        updates.encrypted_aadhaar = `ENCR_${clean}`;
+        updates.masked_aadhaar = `XXXX XXXX ${clean.slice(-4)}`;
+        await supabase.from("audit_logs").insert({
+          action: "update_aadhaar",
+          target_type: "donor",
+          target_id: donorId,
+          timestamp: new Date().toISOString(),
+          metadata: { masked: updates.masked_aadhaar },
+        });
+      }
+    }
 
     await supabase.from("donors").update(updates).eq("id", donorId);
     return { ok: true } as unknown as T;

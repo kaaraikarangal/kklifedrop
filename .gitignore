@@ -79,6 +79,8 @@ agenthub/agents/youtube/db
 memory/test_credentials.md
 
 # Mobile development
+.expo/
+.metro-cache/
 android-sdk/
 .env
 .env.*

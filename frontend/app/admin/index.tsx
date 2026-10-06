@@ -26,6 +26,40 @@ type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "audit";
 const GROUPS = ["All", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const STATUSES = ["All", "Pending", "Admin Reviewing", "Donors Notified", "Donor Found", "Fulfilled", "Cancelled"];
 
+function getReqStatusStyle(status: string) {
+  switch (status) {
+    case "Fulfilled":
+      return { backgroundColor: "#ECFDF5", borderColor: "#A7F3D0" };
+    case "Donor Found":
+      return { backgroundColor: "#EFF6FF", borderColor: "#BFDBFE" };
+    case "Donors Notified":
+      return { backgroundColor: "#FEF3C7", borderColor: "#FDE68A" };
+    case "Admin Reviewing":
+      return { backgroundColor: "#F3E8FF", borderColor: "#E9D5FF" };
+    case "Cancelled":
+      return { backgroundColor: "#F1F5F9", borderColor: "#E2E8F0" };
+    default:
+      return { backgroundColor: "#FEF2F2", borderColor: "#FECACA" };
+  }
+}
+
+function getReqStatusTextStyle(status: string) {
+  switch (status) {
+    case "Fulfilled":
+      return { color: "#065F46" };
+    case "Donor Found":
+      return { color: "#1D4ED8" };
+    case "Donors Notified":
+      return { color: "#92400E" };
+    case "Admin Reviewing":
+      return { color: "#6B21A8" };
+    case "Cancelled":
+      return { color: "#64748B" };
+    default:
+      return { color: "#DC2626" };
+  }
+}
+
 export default function AdminHome() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -64,6 +98,7 @@ export default function AdminHome() {
   const [rekeying, setRekeying] = useState(false);
   const [isEditingAadhaar, setIsEditingAadhaar] = useState(false);
   const [matchModal, setMatchModal] = useState<any>({ open: false });
+  const [matchSearch, setMatchSearch] = useState("");
 
   // 3-Month Donation Cooldown Modal
   const [donationModal, setDonationModal] = useState<{
@@ -218,6 +253,7 @@ export default function AdminHome() {
   async function openMatching(req: any) {
     try {
       const r: any = await api(`/blood-requests/${req.id}/matching-donors`, { auth: true });
+      setMatchSearch("");
       setMatchModal({ open: true, data: r, request: req, selected: new Set<string>() });
     } catch (e: any) {
       toast("error", "Failed", e.message);
@@ -320,9 +356,9 @@ export default function AdminHome() {
     }
   }
 
-  // Filtered Donors
+  // Filtered Donors (Ineligible donors automatically sent to the bottom)
   const filteredDonors = useMemo(() => {
-    return donors.filter((d) => {
+    const list = donors.filter((d) => {
       const matchSearch =
         !donorSearch.trim() ||
         d.full_name?.toLowerCase().includes(donorSearch.toLowerCase()) ||
@@ -340,6 +376,16 @@ export default function AdminHome() {
         (donorRestFilter === "Eligible" && !d.in_cooldown);
 
       return matchSearch && matchBg && matchAvail && matchRest;
+    });
+
+    // Ineligible donors strictly sent to the bottom:
+    // Eligible = Active status + Available + NOT in 3-month donation cooldown
+    return list.sort((a, b) => {
+      const aEligible = a.status === "active" && a.availability === "Available" && !a.in_cooldown;
+      const bEligible = b.status === "active" && b.availability === "Available" && !b.in_cooldown;
+      if (aEligible && !bEligible) return -1;
+      if (!aEligible && bEligible) return 1;
+      return (a.full_name || "").localeCompare(b.full_name || "");
     });
   }, [donors, donorSearch, selectedBg, selectedAvailability, donorRestFilter]);
 
@@ -694,120 +740,166 @@ export default function AdminHome() {
                 <Text style={styles.emptyDesc}>Try clearing your search or filter options</Text>
               </View>
             }
-            renderItem={({ item: d }) => (
-              <View style={styles.donorCard} testID={`admin-donor-${d.id}`}>
-                <View style={styles.donorCardTop}>
-                  <BloodGroupBadge group={d.blood_group} size="md" />
-                  <View style={{ flex: 1, marginLeft: 14 }}>
-                    <View style={styles.donorNameRow}>
-                      <Text style={styles.donorName}>{d.full_name}</Text>
-                      <View style={[styles.statusTag, { backgroundColor: d.status === "active" ? "#ECFDF5" : "#FEF2F2" }]}>
-                        <Text style={[styles.statusTagText, { color: d.status === "active" ? colors.brandGreen : colors.brandRed }]}>
-                          {d.status.toUpperCase()}
-                        </Text>
+            renderItem={({ item: d, index }) => {
+              const isEligible = d.status === "active" && d.availability === "Available" && !d.in_cooldown;
+              const prevDonor = index > 0 ? filteredDonors[index - 1] : null;
+              const prevEligible = prevDonor
+                ? prevDonor.status === "active" && prevDonor.availability === "Available" && !prevDonor.in_cooldown
+                : false;
+              const isFirstIneligible = !isEligible && (index === 0 ? false : prevEligible);
+
+              return (
+                <View key={d.id}>
+                  {isFirstIneligible ? (
+                    <View style={styles.ineligibleSectionDivider}>
+                      <View style={styles.ineligibleSectionDividerLine} />
+                      <View style={styles.ineligibleSectionBadge}>
+                        <Ionicons name="arrow-down-circle" size={14} color="#D97706" />
+                        <Text style={styles.ineligibleSectionText}>INELIGIBLE / RESTING DONORS (SORTED TO BOTTOM)</Text>
+                      </View>
+                      <View style={styles.ineligibleSectionDividerLine} />
+                    </View>
+                  ) : null}
+
+                  <View style={[styles.donorCard, !isEligible && styles.donorCardIneligible]} testID={`admin-donor-${d.id}`}>
+                    {/* TOP HEADER: Blood Group + Name + Location + Status Pills */}
+                    <View style={styles.donorCardHeader}>
+                      <View style={styles.donorHeaderLeft}>
+                        <BloodGroupBadge group={d.blood_group} size="md" />
+                        <View style={{ marginLeft: 12, flex: 1 }}>
+                          <Text style={styles.donorName} numberOfLines={1}>{d.full_name}</Text>
+                          <View style={styles.donorLocationRow}>
+                            <Ionicons name="location-sharp" size={12} color={colors.brandBlue} />
+                            <Text style={styles.donorLocationText} numberOfLines={1}>
+                              {d.area ? `${d.area}, ` : ""}{d.district || d.place || "Karaikal"}{d.pincode ? ` — ${d.pincode}` : ""}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={styles.donorStatusBadgesCol}>
+                        <View style={[styles.pillBadge, d.availability === "Available" ? styles.availBadgeGreen : styles.availBadgeMuted]}>
+                          <View style={[styles.statusDot, { backgroundColor: d.availability === "Available" ? "#10B981" : "#94A3B8" }]} />
+                          <Text style={[styles.pillBadgeText, { color: d.availability === "Available" ? "#065F46" : "#475569" }]}>
+                            {d.availability === "Available" ? "Available" : "Unavailable"}
+                          </Text>
+                        </View>
+                        {d.status === "suspended" ? (
+                          <View style={[styles.pillBadge, styles.statusBadgeSuspended]}>
+                            <Text style={styles.statusBadgeSuspendedText}>SUSPENDED</Text>
+                          </View>
+                        ) : null}
+                        {!isEligible ? (
+                          <View style={styles.ineligibleTagPill}>
+                            <Ionicons name="arrow-down" size={10} color="#92400E" />
+                            <Text style={styles.ineligibleTagPillText}>
+                              {d.in_cooldown ? "ON 3-MO REST" : d.availability !== "Available" ? "UNAVAILABLE" : "SUSPENDED"}
+                            </Text>
+                          </View>
+                        ) : null}
                       </View>
                     </View>
 
-                    <Text style={styles.donorMetaLocation}>
-                      <Ionicons name="location" size={13} color={colors.brandBlue} /> {d.area}, {d.place}, {d.district} — {d.pincode}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* 3-Month Donation Rest Period Card */}
-                <View style={[styles.restStatusBanner, d.in_cooldown ? styles.restStatusBannerResting : styles.restStatusBannerEligible]}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
-                    <View style={[styles.restStatusIconWrap, { backgroundColor: d.in_cooldown ? "#FEF3C7" : "#ECFDF5" }]}>
-                      <Ionicons
-                        name={d.in_cooldown ? "shield-checkmark" : "checkmark-circle"}
-                        size={16}
-                        color={d.in_cooldown ? "#D97706" : colors.brandGreen}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.restBannerTitle, { color: d.in_cooldown ? "#92400E" : "#065F46" }]}>
-                        {d.in_cooldown
-                          ? `Resting: ${d.cooldown_days_left}d Left (Protected - Non-Notifiable)`
-                          : "Eligible to Donate (Notifiable)"}
+                {/* 3-MONTH DONATION COOLDOWN & ELIGIBILITY STRIP */}
+                <View style={[styles.restStatusStrip, d.in_cooldown ? styles.restStatusStripResting : styles.restStatusStripEligible]}>
+                  <View style={styles.restStripLeft}>
+                    <Ionicons
+                      name={d.in_cooldown ? "shield-checkmark" : "checkmark-circle"}
+                      size={16}
+                      color={d.in_cooldown ? "#D97706" : "#059669"}
+                    />
+                    <View style={{ marginLeft: 6, flex: 1 }}>
+                      <Text style={[styles.restStripTitle, { color: d.in_cooldown ? "#92400E" : "#065F46" }]}>
+                        {d.in_cooldown ? `Resting: ${d.cooldown_days_left}d Left (Protected)` : "Eligible for Donation (Active)"}
                       </Text>
-                      <Text style={[styles.restBannerSub, { color: d.in_cooldown ? "#B45309" : "#047857" }]}>
-                        {d.last_donation_date
-                          ? `Donated: ${d.last_donation_date} • Next Eligible: ${d.cooldown_end_date || "Now"}`
-                          : "No recent donation recorded"}
+                      <Text style={[styles.restStripSub, { color: d.in_cooldown ? "#B45309" : "#047857" }]}>
+                        {d.last_donation_date ? `Last: ${d.last_donation_date} • Next: ${d.cooldown_end_date || "Now"}` : "Ready to receive blood requests"}
                       </Text>
                     </View>
                   </View>
 
                   <Pressable
                     testID={`record-donation-${d.id}`}
-                    style={[styles.recordDonationBtn, d.in_cooldown && styles.recordDonationBtnActive]}
+                    style={[styles.btnRecordDonationCompact, d.in_cooldown && styles.btnRecordDonationCompactActive]}
                     onPress={() => openDonationModal(d)}
                   >
-                    <Ionicons name="calendar" size={12} color={d.in_cooldown ? "#92400E" : colors.brandPrimary} />
-                    <Text style={[styles.recordDonationBtnText, { color: d.in_cooldown ? "#92400E" : colors.brandPrimary }]}>
+                    <Ionicons name="calendar-outline" size={13} color={d.in_cooldown ? "#92400E" : colors.brandPrimary} />
+                    <Text style={[styles.btnRecordDonationText, { color: d.in_cooldown ? "#92400E" : colors.brandPrimary }]}>
                       {d.in_cooldown ? "Edit Rest" : "Mark Donated"}
                     </Text>
                   </Pressable>
                 </View>
 
-                <View style={styles.donorDetailsGrid}>
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Mobile</Text>
-                    <Pressable onPress={() => Linking.openURL(`tel:+91${d.mobile}`)} style={styles.clickableContact}>
+                {/* KEY INFO TILES */}
+                <View style={styles.donorInfoTilesRow}>
+                  <Pressable style={styles.infoTile} onPress={() => Linking.openURL(`tel:+91${d.mobile}`)}>
+                    <Text style={styles.infoTileLabel}>MOBILE (TAP TO CALL)</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
                       <Ionicons name="call" size={12} color={colors.brandBlue} />
-                      <Text style={styles.detailValuePrimary}>+91 {d.mobile}</Text>
-                    </Pressable>
+                      <Text style={styles.infoTileValuePhone}>+91 {d.mobile}</Text>
+                    </View>
+                  </Pressable>
+
+                  <View style={styles.infoTile}>
+                    <Text style={styles.infoTileLabel}>GOVT AADHAAR</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                      <Ionicons name="shield-checkmark" size={12} color="#64748B" />
+                      <Text style={styles.infoTileValueAadhaar}>{d.masked_aadhaar}</Text>
+                    </View>
                   </View>
 
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Email</Text>
-                    <Text style={styles.detailValue}>{d.email || "Not provided"}</Text>
-                  </View>
-
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Gender / Age</Text>
-                    <Text style={styles.detailValue}>{d.gender || "—"}, DOB: {d.date_of_birth || "—"}</Text>
-                  </View>
-
-                  <View style={styles.detailItem}>
-                    <Text style={styles.detailLabel}>Aadhaar</Text>
-                    <Text style={styles.detailValue}>{d.masked_aadhaar}</Text>
+                  <View style={styles.infoTile}>
+                    <Text style={styles.infoTileLabel}>GENDER / DOB</Text>
+                    <Text style={styles.infoTileValue} numberOfLines={1}>
+                      {d.gender || "—"}, {d.date_of_birth ? d.date_of_birth : "—"}
+                    </Text>
                   </View>
                 </View>
 
-                <View style={styles.donorActionsRow}>
-                  <Pressable testID={`reveal-aadhaar-${d.id}`} style={styles.actionBtnOutline} onPress={() => revealAadhaar(d)}>
-                    <Ionicons name="eye-outline" size={14} color={colors.brandBlue} />
-                    <Text style={styles.actionBtnOutlineText}>Reveal Aadhaar</Text>
+                {/* ACTION TOOLBAR */}
+                <View style={styles.donorActionBar}>
+                  <Pressable
+                    testID={`reveal-aadhaar-${d.id}`}
+                    style={styles.actionBtnReveal}
+                    onPress={() => revealAadhaar(d)}
+                  >
+                    <Ionicons name="eye" size={14} color="#FFFFFF" />
+                    <Text style={styles.actionBtnRevealText}>Reveal Aadhaar</Text>
                   </Pressable>
 
                   <Pressable
-                    style={[styles.actionBtnAvailability, { backgroundColor: d.availability === "Available" ? "#ECFDF5" : "#F1F5F9" }]}
+                    style={[styles.actionBtnAvailToggle, d.availability === "Available" ? styles.availToggleActive : styles.availToggleInactive]}
                     onPress={() => toggleDonorAvailability(d)}
                   >
-                    <View style={[styles.dot, { backgroundColor: d.availability === "Available" ? colors.brandGreen : colors.muted }]} />
-                    <Text style={[styles.availBtnText, { color: d.availability === "Available" ? colors.brandGreen : colors.muted }]}>
-                      {d.availability} (Toggle)
+                    <Ionicons
+                      name={d.availability === "Available" ? "pause-circle-outline" : "play-circle-outline"}
+                      size={14}
+                      color={d.availability === "Available" ? "#92400E" : "#065F46"}
+                    />
+                    <Text style={[styles.actionBtnAvailToggleText, { color: d.availability === "Available" ? "#92400E" : "#065F46" }]}>
+                      {d.availability === "Available" ? "Mark Unavailable" : "Mark Available"}
                     </Text>
                   </Pressable>
 
                   <Pressable
-                    style={[styles.actionBtnStatus, { backgroundColor: d.status === "active" ? "#FEF2F2" : "#EFF6FF" }]}
+                    style={[styles.actionBtnStatusToggle, d.status === "active" ? styles.statusBtnSuspend : styles.statusBtnActivate]}
                     onPress={() => toggleDonorStatus(d)}
                   >
                     <Ionicons
-                      name={d.status === "active" ? "pause-circle-outline" : "play-circle-outline"}
+                      name={d.status === "active" ? "ban-outline" : "checkmark-circle-outline"}
                       size={14}
                       color={d.status === "active" ? "#DC2626" : colors.brandBlue}
                     />
-                    <Text style={[styles.statusBtnText, { color: d.status === "active" ? "#DC2626" : colors.brandBlue }]}>
+                    <Text style={[styles.actionBtnStatusToggleText, { color: d.status === "active" ? "#DC2626" : colors.brandBlue }]}>
                       {d.status === "active" ? "Suspend" : "Activate"}
                     </Text>
                   </Pressable>
                 </View>
               </View>
-            )}
-          />
+            </View>
+          );
+        }}
+        />
         </View>
       )}
 
@@ -880,82 +972,139 @@ export default function AdminHome() {
             }
             renderItem={({ item: r }) => (
               <View style={[styles.requestCard, r.urgency === "Emergency" && styles.requestCardEmergency]}>
-                <View style={styles.reqCardHeader}>
-                  <View style={styles.reqCardHeaderLeft}>
+                {/* CARD HEADER */}
+                <View style={styles.reqHeaderRow}>
+                  <View style={styles.reqHeaderLeft}>
                     <BloodGroupBadge group={r.blood_group} size="md" />
-                    <View style={{ marginLeft: 12 }}>
-                      <Text style={styles.reqPatientName}>{r.patient_name}</Text>
+                    <View style={{ marginLeft: 12, flex: 1 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <Text style={styles.reqPatientName} numberOfLines={1}>{r.patient_name}</Text>
+                        <View style={styles.unitsPill}>
+                          <Text style={styles.unitsPillText}>{r.units_required} {r.units_required > 1 ? "Units" : "Unit"}</Text>
+                        </View>
+                      </View>
                       <Text style={styles.reqNumberText}>{r.request_number}</Text>
                     </View>
                   </View>
 
                   <View style={styles.reqBadgesCol}>
                     {r.urgency === "Emergency" ? (
-                      <View style={styles.emergencyTag}>
+                      <View style={styles.emergencyPill}>
                         <Ionicons name="flash" size={10} color="#FFFFFF" />
-                        <Text style={styles.emergencyTagText}>EMERGENCY</Text>
+                        <Text style={styles.emergencyPillText}>EMERGENCY</Text>
                       </View>
                     ) : (
-                      <View style={styles.urgencyTag}>
-                        <Text style={styles.urgencyTagText}>{r.urgency.toUpperCase()}</Text>
+                      <View style={styles.urgencyPill}>
+                        <Text style={styles.urgencyPillText}>{r.urgency?.toUpperCase()}</Text>
                       </View>
                     )}
-                    <View style={styles.statusPill}>
-                      <Text style={styles.statusPillText}>{r.status}</Text>
+                    <View style={[styles.statusBadgePill, getReqStatusStyle(r.status)]}>
+                      <Text style={[styles.statusBadgePillText, getReqStatusTextStyle(r.status)]}>{r.status}</Text>
                     </View>
                   </View>
                 </View>
 
-                <View style={styles.reqDetailsGrid}>
-                  <View style={styles.reqDetailRow}>
-                    <Ionicons name="business" size={14} color="#64748B" />
-                    <Text style={styles.reqDetailText}>
-                      <Text style={{ fontWeight: "700" }}>{r.hospital_name}</Text> ({r.hospital_city || r.hospital_area}) • {r.units_required} Unit(s)
-                    </Text>
-                  </View>
-
-                  <View style={styles.reqDetailRow}>
-                    <Ionicons name="person" size={14} color="#64748B" />
-                    <Text style={styles.reqDetailText}>
-                      Requester: <Text style={{ fontWeight: "700" }}>{r.requester_name}</Text> ({r.relationship || "Relative"})
-                    </Text>
-                  </View>
-
-                  <View style={styles.reqDetailRow}>
-                    <Ionicons name="call" size={14} color={colors.brandBlue} />
-                    <Pressable onPress={() => Linking.openURL(`tel:+91${r.requester_mobile}`)}>
-                      <Text style={[styles.reqDetailText, { color: colors.brandBlue, fontWeight: "700" }]}>
-                        +91 {r.requester_mobile} (Tap to Call)
+                {/* HOSPITAL & REQUESTER INFO TILES */}
+                <View style={styles.reqInfoSection}>
+                  <View style={styles.reqHospitalRow}>
+                    <View style={styles.reqIconWrapHospital}>
+                      <Ionicons name="business" size={15} color={colors.brandPrimary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.reqHospitalTitle}>{r.hospital_name}</Text>
+                      <Text style={styles.reqHospitalSubtitle}>
+                        {r.hospital_city || r.hospital_area || "Karaikal"}{r.required_date ? ` • Needed By: ${r.required_date}` : ""}
                       </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.reqRequesterRow}>
+                    <View style={styles.reqIconWrapRequester}>
+                      <Ionicons name="person" size={15} color={colors.brandBlue} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.reqRequesterTitle}>
+                        {r.requester_name} <Text style={styles.reqRequesterRelation}>({r.relationship || "Contact"})</Text>
+                      </Text>
+                      <Text style={styles.reqRequesterMobile}>+91 {r.requester_mobile}</Text>
+                    </View>
+                    <Pressable
+                      style={styles.btnQuickCall}
+                      onPress={() => Linking.openURL(`tel:+91${r.requester_mobile}`)}
+                    >
+                      <Ionicons name="call" size={12} color="#FFFFFF" />
+                      <Text style={styles.btnQuickCallText}>Call</Text>
                     </Pressable>
                   </View>
 
                   {r.additional_message ? (
-                    <View style={styles.reqMessageRow}>
+                    <View style={styles.reqMessageSnippet}>
                       <Ionicons name="chatbubble-ellipses-outline" size={13} color="#64748B" />
-                      <Text style={styles.reqMessageText}>"{r.additional_message}"</Text>
+                      <Text style={styles.reqMessageSnippetText} numberOfLines={2}>
+                        "{r.additional_message}"
+                      </Text>
                     </View>
                   ) : null}
                 </View>
 
-                <View style={styles.reqActionsBar}>
-                  <Pressable testID={`notify-${r.id}`} style={styles.btnMatchNotify} onPress={() => openMatching(r)}>
-                    <Ionicons name="megaphone" size={14} color="#FFFFFF" />
-                    <Text style={styles.btnMatchNotifyText}>Match & Notify Donors</Text>
-                  </Pressable>
+                {/* WORKFLOW ACTION BAR */}
+                <View style={styles.reqActionContainer}>
+                  {r.status === "Fulfilled" ? (
+                    <View style={styles.fulfilledBanner}>
+                      <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                      <Text style={styles.fulfilledBannerText}>Fulfilled • Blood Unit Provided</Text>
+                    </View>
+                  ) : r.status === "Cancelled" ? (
+                    <View style={styles.cancelledBanner}>
+                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                      <Text style={styles.cancelledBannerText}>Request Cancelled</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.reqPrimaryActionRow}>
+                      <Pressable
+                        testID={`notify-${r.id}`}
+                        style={styles.btnPrimaryBroadcast}
+                        onPress={() => openMatching(r)}
+                      >
+                        <Ionicons name="megaphone" size={14} color="#FFFFFF" />
+                        <Text style={styles.btnPrimaryBroadcastText}>
+                          {r.status === "Donors Notified" ? "Broadcast Again" : "Match & Notify Donors"}
+                        </Text>
+                      </Pressable>
 
-                  <Pressable testID={`fulfill-${r.id}`} style={styles.btnFulfill} onPress={() => openFulfillModal(r)}>
-                    <Ionicons name="checkmark-done" size={14} color="#FFFFFF" />
-                    <Text style={styles.btnFulfillText}>Fulfill</Text>
-                  </Pressable>
+                      <Pressable
+                        testID={`fulfill-${r.id}`}
+                        style={styles.btnPrimaryFulfill}
+                        onPress={() => openFulfillModal(r)}
+                      >
+                        <Ionicons name="checkmark-done" size={14} color="#FFFFFF" />
+                        <Text style={styles.btnPrimaryFulfillText}>Fulfill</Text>
+                      </Pressable>
+                    </View>
+                  )}
 
-                  <Pressable style={styles.btnReviewing} onPress={() => updateStatus(r, "Admin Reviewing")}>
-                    <Text style={styles.btnReviewingText}>Review</Text>
-                  </Pressable>
+                  {r.status !== "Fulfilled" && r.status !== "Cancelled" ? (
+                    <View style={styles.reqSecondaryActionRow}>
+                      <Pressable
+                        style={[styles.btnSecondaryChip, r.status === "Admin Reviewing" && styles.btnSecondaryChipActive]}
+                        onPress={() => updateStatus(r, "Admin Reviewing")}
+                      >
+                        <Ionicons name="eye-outline" size={12} color="#475569" />
+                        <Text style={styles.btnSecondaryChipText}>
+                          {r.status === "Admin Reviewing" ? "Under Review" : "Mark Reviewing"}
+                        </Text>
+                      </Pressable>
 
-                  <Pressable testID={`cancel-${r.id}`} style={styles.btnCancel} onPress={() => updateStatus(r, "Cancelled")}>
-                    <Text style={styles.btnCancelText}>Cancel</Text>
-                  </Pressable>
+                      <Pressable
+                        testID={`cancel-${r.id}`}
+                        style={styles.btnSecondaryChipCancel}
+                        onPress={() => updateStatus(r, "Cancelled")}
+                      >
+                        <Ionicons name="close-outline" size={13} color="#EF4444" />
+                        <Text style={styles.btnSecondaryChipCancelText}>Cancel</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             )}
@@ -1232,127 +1381,217 @@ export default function AdminHome() {
                   </View>
                 </View>
 
-                <Text style={styles.matchListSectionLabel}>SELECT ELIGIBLE DONORS TO NOTIFY</Text>
-                <ScrollView style={styles.matchDonorsList}>
-                  {[
+                {/* SELECT DONORS BY NAME TO BROADCAST */}
+                {(() => {
+                  const allEligible = [
                     ...(matchModal.data.same_area || []).map((x: any) => ({ ...x, bucket: "Same Area" })),
                     ...(matchModal.data.same_district || []).map((x: any) => ({ ...x, bucket: "Same District" })),
                     ...(matchModal.data.other || []).map((x: any) => ({ ...x, bucket: "Other Region" })),
-                  ].map((d: any) => {
-                    const isSelected = matchModal.selected?.has(d.id);
+                  ];
+
+                  const filteredMatches = allEligible.filter((d: any) => {
+                    if (!matchSearch.trim()) return true;
+                    const q = matchSearch.toLowerCase().trim();
                     return (
-                      <Pressable
-                        key={d.id}
-                        onPress={() => {
-                          const s = new Set<string>(matchModal.selected);
-                          if (s.has(d.id)) s.delete(d.id);
-                          else s.add(d.id);
-                          setMatchModal({ ...matchModal, selected: s });
-                        }}
-                        style={[styles.matchRow, isSelected && styles.matchRowSelected]}
-                      >
-                        <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
-                          {isSelected ? <Ionicons name="checkmark" size={13} color="#FFFFFF" /> : null}
-                        </View>
-                        <BloodGroupBadge group={d.blood_group} size="sm" />
-                        <View style={{ flex: 1, marginLeft: 10 }}>
-                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                            <Text style={styles.matchDonorName}>{d.full_name}</Text>
-                            <View style={styles.bucketTag}>
-                              <Text style={styles.bucketTagText}>{d.bucket}</Text>
-                            </View>
-                          </View>
-                          <Text style={styles.matchDonorMeta}>
-                            {d.area}, {d.district} • Last Donated: {d.last_donation_date || "First-time / Eligible"}
-                          </Text>
-                        </View>
-                      </Pressable>
+                      d.full_name?.toLowerCase().includes(q) ||
+                      d.mobile?.includes(q) ||
+                      d.area?.toLowerCase().includes(q) ||
+                      d.district?.toLowerCase().includes(q)
                     );
-                  })}
+                  });
 
-                  {(!matchModal.data.same_area?.length &&
-                    !matchModal.data.same_district?.length &&
-                    !matchModal.data.other?.length) ? (
-                    <Text style={styles.noMatchText}>
-                      No currently eligible donors found matching group {matchModal.request?.blood_group}.
-                    </Text>
-                  ) : null}
-
-                  {/* 3-Month Medical Rest Section (Non-Notifiable Donors) */}
-                  {matchModal.data.resting_donors?.length ? (
+                  return (
                     <>
-                      <View style={styles.matchRestSectionHeader}>
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <Ionicons name="shield-checkmark" size={14} color="#D97706" />
-                          <Text style={styles.matchRestSectionTitle}>
-                            3-MONTH MEDICAL REST PERIOD ({matchModal.data.resting_donors.length})
-                          </Text>
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={styles.matchListSectionLabel}>SELECT DONORS BY NAME TO BROADCAST</Text>
+
+                        {/* Search Input */}
+                        <View style={styles.matchSearchContainer}>
+                          <Ionicons name="search" size={16} color="#64748B" />
+                          <TextInput
+                            testID="match-donor-search-input"
+                            style={styles.matchSearchInput}
+                            placeholder="Type name to find & select donor..."
+                            placeholderTextColor="#94A3B8"
+                            value={matchSearch}
+                            onChangeText={setMatchSearch}
+                            autoCapitalize="none"
+                          />
+                          {matchSearch ? (
+                            <Pressable onPress={() => setMatchSearch("")} hitSlop={8}>
+                              <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                            </Pressable>
+                          ) : null}
                         </View>
-                        <View style={styles.restBadgeTag}>
-                          <Ionicons name="lock-closed" size={10} color="#92400E" />
-                          <Text style={styles.restBadgeTagText}>PROTECTED</Text>
+
+                        {/* Quick Selection Toolbar */}
+                        <View style={styles.matchSelectionBar}>
+                          <Text style={styles.matchSelectionCountText}>
+                            Selected: <Text style={{ fontWeight: "900", color: colors.brandPrimary }}>{matchModal.selected?.size || 0}</Text> of {allEligible.length}
+                          </Text>
+                          <View style={{ flexDirection: "row", gap: 6 }}>
+                            <Pressable
+                              testID="match-select-all-btn"
+                              style={styles.matchQuickBtn}
+                              onPress={() => {
+                                const s = new Set<string>(matchModal.selected || []);
+                                filteredMatches.forEach((d: any) => s.add(d.id));
+                                setMatchModal({ ...matchModal, selected: s });
+                              }}
+                            >
+                              <Ionicons name="checkmark-done" size={12} color="#1D4ED8" />
+                              <Text style={styles.matchQuickBtnText}>Select All ({filteredMatches.length})</Text>
+                            </Pressable>
+
+                            {matchModal.selected?.size > 0 ? (
+                              <Pressable
+                                testID="match-clear-btn"
+                                style={[styles.matchQuickBtn, { backgroundColor: "#FEF2F2", borderColor: "#FECACA" }]}
+                                onPress={() => {
+                                  setMatchModal({ ...matchModal, selected: new Set<string>() });
+                                }}
+                              >
+                                <Ionicons name="close" size={12} color="#DC2626" />
+                                <Text style={[styles.matchQuickBtnText, { color: "#DC2626" }]}>Clear ({matchModal.selected.size})</Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
                         </View>
                       </View>
 
-                      <Text style={styles.matchRestSectionDesc}>
-                        These donors donated blood recently and are legally protected under the mandatory 90-day rest rule. Notifications are disabled to safeguard donor health.
-                      </Text>
+                      <ScrollView style={styles.matchDonorsList}>
+                        {filteredMatches.map((d: any) => {
+                          const isSelected = matchModal.selected?.has(d.id);
+                          return (
+                            <Pressable
+                              key={d.id}
+                              testID={`match-donor-${d.id}`}
+                              onPress={() => {
+                                const s = new Set<string>(matchModal.selected);
+                                if (s.has(d.id)) s.delete(d.id);
+                                else s.add(d.id);
+                                setMatchModal({ ...matchModal, selected: s });
+                              }}
+                              style={[styles.matchRow, isSelected && styles.matchRowSelected]}
+                            >
+                              <View style={[styles.checkbox, isSelected && styles.checkboxActive]}>
+                                {isSelected ? <Ionicons name="checkmark" size={13} color="#FFFFFF" /> : null}
+                              </View>
+                              <BloodGroupBadge group={d.blood_group} size="sm" />
+                              <View style={{ flex: 1, marginLeft: 10 }}>
+                                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                                  <Text style={[styles.matchDonorName, isSelected && styles.matchDonorNameSelected]}>{d.full_name}</Text>
+                                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                                    {isSelected ? (
+                                      <View style={styles.selectedPill}>
+                                        <Text style={styles.selectedPillText}>✓ SELECTED</Text>
+                                      </View>
+                                    ) : null}
+                                    <View style={styles.bucketTag}>
+                                      <Text style={styles.bucketTagText}>{d.bucket}</Text>
+                                    </View>
+                                  </View>
+                                </View>
+                                <Text style={styles.matchDonorMeta}>
+                                  {d.area ? `${d.area}, ` : ""}{d.district} • Mobile: +91 {d.mobile}
+                                </Text>
+                              </View>
+                            </Pressable>
+                          );
+                        })}
 
-                      {matchModal.data.resting_donors.map((d: any) => (
-                        <View key={d.id} style={styles.matchRowResting}>
-                          <View style={styles.checkboxDisabled}>
-                            <Ionicons name="lock-closed" size={12} color="#94A3B8" />
-                          </View>
-                          <BloodGroupBadge group={d.blood_group} size="sm" />
-                          <View style={{ flex: 1, marginLeft: 10 }}>
-                            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                              <Text style={styles.matchDonorNameMuted}>{d.full_name}</Text>
-                              <View style={styles.restingDaysTag}>
-                                <Text style={styles.restingDaysTagText}>{d.cooldown_days_left}d rest remaining</Text>
+                        {filteredMatches.length === 0 ? (
+                          <Text style={styles.noMatchText}>
+                            {matchSearch
+                              ? `No eligible donors matching "${matchSearch}". Clear search to view all.`
+                              : `No currently eligible donors found matching group ${matchModal.request?.blood_group}.`}
+                          </Text>
+                        ) : null}
+
+                        {/* 3-Month Medical Rest Section (Non-Notifiable Donors) */}
+                        {matchModal.data.resting_donors?.length ? (
+                          <>
+                            <View style={styles.matchRestSectionHeader}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <Ionicons name="shield-checkmark" size={14} color="#D97706" />
+                                <Text style={styles.matchRestSectionTitle}>
+                                  3-MONTH MEDICAL REST PERIOD ({matchModal.data.resting_donors.length})
+                                </Text>
+                              </View>
+                              <View style={styles.restBadgeTag}>
+                                <Ionicons name="lock-closed" size={10} color="#92400E" />
+                                <Text style={styles.restBadgeTagText}>PROTECTED</Text>
                               </View>
                             </View>
-                            <Text style={styles.matchDonorMetaMuted}>
-                              {d.area}, {d.district} • Donated: {d.last_donation_date} • Next eligible: {d.cooldown_end_date}
+
+                            <Text style={styles.matchRestSectionDesc}>
+                              These donors donated blood recently and are legally protected under the mandatory 90-day rest rule. Notifications are disabled to safeguard donor health.
                             </Text>
-                          </View>
+
+                            {matchModal.data.resting_donors.map((d: any) => (
+                              <View key={d.id} style={styles.matchRowResting}>
+                                <View style={styles.checkboxDisabled}>
+                                  <Ionicons name="lock-closed" size={12} color="#94A3B8" />
+                                </View>
+                                <BloodGroupBadge group={d.blood_group} size="sm" />
+                                <View style={{ flex: 1, marginLeft: 10 }}>
+                                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                                    <Text style={styles.matchDonorNameMuted}>{d.full_name}</Text>
+                                    <View style={styles.restingDaysTag}>
+                                      <Text style={styles.restingDaysTagText}>{d.cooldown_days_left}d rest remaining</Text>
+                                    </View>
+                                  </View>
+                                  <Text style={styles.matchDonorMetaMuted}>
+                                    {d.area}, {d.district} • Donated: {d.last_donation_date} • Next eligible: {d.cooldown_end_date}
+                                  </Text>
+                                </View>
+                              </View>
+                            ))}
+                          </>
+                        ) : null}
+                      </ScrollView>
+
+                      <View style={styles.matchActionsContainer}>
+                        <Pressable
+                          testID="notify-selected"
+                          style={[
+                            styles.btnNotifySelected,
+                            matchModal.selected?.size > 0 ? styles.btnNotifySelectedActive : styles.btnNotifyDisabled,
+                          ]}
+                          onPress={() => notify("selected")}
+                          disabled={!matchModal.selected?.size}
+                        >
+                          <Ionicons name="paper-plane" size={15} color="#FFFFFF" />
+                          <Text style={styles.btnNotifySelectedText}>
+                            {matchModal.selected?.size > 0
+                              ? `Broadcast Alert to ${matchModal.selected.size} Selected Donor${matchModal.selected.size > 1 ? "s" : ""}`
+                              : "Select Donors by Name to Broadcast"}
+                          </Text>
+                        </Pressable>
+
+                        <View style={styles.matchButtonsRow}>
+                          <Pressable
+                            testID="notify-same-area"
+                            style={[styles.btnNotifyScope, { backgroundColor: colors.brandBlue }]}
+                            onPress={() => notify("same_area")}
+                          >
+                            <Ionicons name="navigate" size={14} color="#FFFFFF" />
+                            <Text style={styles.btnNotifyScopeText}>Same Area ({matchModal.data.counts?.same_area || 0})</Text>
+                          </Pressable>
+
+                          <Pressable
+                            testID="notify-all"
+                            style={[styles.btnNotifyScope, { backgroundColor: "#0F172A" }]}
+                            onPress={() => notify("all")}
+                          >
+                            <Ionicons name="megaphone" size={14} color="#FFFFFF" />
+                            <Text style={styles.btnNotifyScopeText}>Notify All ({matchModal.data.counts?.total || 0})</Text>
+                          </Pressable>
                         </View>
-                      ))}
+                      </View>
                     </>
-                  ) : null}
-                </ScrollView>
-
-                <View style={styles.matchActionsContainer}>
-                  <View style={styles.matchButtonsRow}>
-                    <Pressable
-                      testID="notify-same-area"
-                      style={[styles.btnNotifyScope, { backgroundColor: colors.brandBlue }]}
-                      onPress={() => notify("same_area")}
-                    >
-                      <Ionicons name="navigate" size={14} color="#FFFFFF" />
-                      <Text style={styles.btnNotifyScopeText}>Same Area ({matchModal.data.counts?.same_area || 0})</Text>
-                    </Pressable>
-
-                    <Pressable
-                      testID="notify-all"
-                      style={[styles.btnNotifyScope, { backgroundColor: colors.brandPrimary }]}
-                      onPress={() => notify("all")}
-                    >
-                      <Ionicons name="paper-plane" size={14} color="#FFFFFF" />
-                      <Text style={styles.btnNotifyScopeText}>Notify All ({matchModal.data.counts?.total || 0})</Text>
-                    </Pressable>
-                  </View>
-
-                  <Pressable
-                    testID="notify-selected"
-                    style={[styles.btnNotifySelected, !matchModal.selected?.size && styles.btnNotifyDisabled]}
-                    onPress={() => notify("selected")}
-                    disabled={!matchModal.selected?.size}
-                  >
-                    <Text style={styles.btnNotifySelectedText}>
-                      Broadcast to Selected ({matchModal.selected?.size || 0})
-                    </Text>
-                  </Pressable>
-                </View>
+                  );
+                })()}
               </>
             ) : null}
           </View>
@@ -2041,93 +2280,256 @@ const styles = StyleSheet.create({
     color: "#64748B",
   },
 
-  /* Donor Card */
+  /* ========================================================================= */
+  /* Redesigned Donor Card Styles */
+  /* ========================================================================= */
+  /* Ineligible Section Divider */
+  ineligibleSectionDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 14,
+    gap: 8,
+  },
+  ineligibleSectionDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#FDE68A",
+  },
+  ineligibleSectionBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+  },
+  ineligibleSectionText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#92400E",
+    letterSpacing: 0.5,
+  },
+
   donorCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: radius.lg,
     padding: spacing.md,
-    marginBottom: 12,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "#E2E8F0",
     shadowColor: "#000",
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
-    elevation: 1,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  donorCardTop: {
+  donorCardIneligible: {
+    backgroundColor: "#FAFAFA",
+    borderColor: "#E2E8F0",
+    opacity: 0.92,
+  },
+  ineligibleTagPill: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 3,
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    marginTop: 4,
+    alignSelf: "flex-end",
   },
-  donorNameRow: {
+  ineligibleTagPillText: {
+    fontSize: 9,
+    fontWeight: "900",
+    color: "#92400E",
+  },
+  donorCardHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  donorHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 8,
   },
   donorName: {
     fontSize: 16,
-    fontWeight: "800",
+    fontWeight: "900",
     color: "#0F172A",
   },
-  statusTag: {
+  donorLocationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginTop: 2,
+  },
+  donorLocationText: {
+    fontSize: 12,
+    color: "#64748B",
+    fontWeight: "500",
+  },
+  donorStatusBadgesCol: {
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  pillBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: radius.pill,
   },
-  statusTagText: {
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  availBadgeGreen: {
+    backgroundColor: "#ECFDF5",
+  },
+  availBadgeMuted: {
+    backgroundColor: "#F1F5F9",
+  },
+  pillBadgeText: {
     fontSize: 10,
     fontWeight: "800",
   },
-  donorMetaLocation: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 3,
+  statusBadgeSuspended: {
+    backgroundColor: "#FEF2F2",
   },
-  donorDetailsGrid: {
+  statusBadgeSuspendedText: {
+    color: "#DC2626",
+    fontSize: 9,
+    fontWeight: "900",
+  },
+
+  /* 3-Month Donation Cooldown Strip */
+  restStatusStrip: {
     flexDirection: "row",
-    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: radius.md,
+    marginTop: 10,
+    borderWidth: 1,
+  },
+  restStatusStripEligible: {
+    backgroundColor: "#F0FDF4",
+    borderColor: "#BBF7D0",
+  },
+  restStatusStripResting: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FDE68A",
+  },
+  restStripLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 8,
+  },
+  restStripTitle: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  restStripSub: {
+    fontSize: 10,
+    fontWeight: "500",
+    marginTop: 1,
+  },
+  btnRecordDonationCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  btnRecordDonationCompactActive: {
+    borderColor: "#FDE68A",
+    backgroundColor: "#FEF3C7",
+  },
+  btnRecordDonationText: {
+    fontSize: 10,
+    fontWeight: "800",
+  },
+
+  /* Key Info Tiles (3 columns) */
+  donorInfoTilesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     backgroundColor: "#F8FAFC",
     borderRadius: radius.md,
     padding: 10,
     marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
     gap: 8,
   },
-  detailItem: {
-    width: "48%",
+  infoTile: {
+    flex: 1,
   },
-  detailLabel: {
-    fontSize: 10,
-    fontWeight: "700",
+  infoTileLabel: {
+    fontSize: 9,
+    fontWeight: "800",
     color: "#94A3B8",
-    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
-  detailValue: {
+  infoTileValuePhone: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#334155",
-    marginTop: 1,
-  },
-  detailValuePrimary: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "800",
     color: colors.brandBlue,
   },
-  clickableContact: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 1,
+  infoTileValueAadhaar: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155",
   },
-  donorActionsRow: {
+  infoTileValue: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#475569",
+    marginTop: 2,
+  },
+
+  /* Donor Actions Toolbar */
+  donorActionBar: {
     flexDirection: "row",
-    flexWrap: "wrap",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: 8,
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
   },
-  actionBtnOutline: {
+  actionBtnReveal: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: colors.brandBlue,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  actionBtnRevealText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  actionBtnAvailToggle: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
@@ -2135,45 +2537,45 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+  },
+  availToggleActive: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FDE68A",
+  },
+  availToggleInactive: {
+    backgroundColor: "#ECFDF5",
+    borderColor: "#A7F3D0",
+  },
+  actionBtnAvailToggleText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  actionBtnStatusToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginLeft: "auto",
+  },
+  statusBtnSuspend: {
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FECACA",
+  },
+  statusBtnActivate: {
     backgroundColor: "#EFF6FF",
+    borderColor: "#BFDBFE",
   },
-  actionBtnOutlineText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.brandBlue,
-  },
-  actionBtnAvailability: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: radius.pill,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  availBtnText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  actionBtnStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: radius.pill,
-  },
-  statusBtnText: {
+  actionBtnStatusToggleText: {
     fontSize: 11,
     fontWeight: "700",
   },
 
-  /* Request Card */
+  /* ========================================================================= */
+  /* Redesigned Request Card Styles */
+  /* ========================================================================= */
   requestCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: radius.lg,
@@ -2182,27 +2584,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
     shadowColor: "#000",
-    shadowOpacity: 0.03,
-    shadowRadius: 6,
-    elevation: 1,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   requestCardEmergency: {
     borderWidth: 2,
     borderColor: "#EF4444",
+    backgroundColor: "#FFFDFD",
   },
-  reqCardHeader: {
+  reqHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
-  reqCardHeaderLeft: {
+  reqHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
+    marginRight: 8,
   },
   reqPatientName: {
     fontSize: 16,
     fontWeight: "900",
     color: "#0F172A",
+  },
+  unitsPill: {
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  unitsPillText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: colors.brandPrimary,
   },
   reqNumberText: {
     fontSize: 11,
@@ -2214,131 +2632,249 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 4,
   },
-  emergencyTag: {
+  emergencyPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
     backgroundColor: "#DC2626",
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: radius.pill,
   },
-  emergencyTagText: {
+  emergencyPillText: {
     color: "#FFFFFF",
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 0.5,
   },
-  urgencyTag: {
+  urgencyPill: {
     backgroundColor: "#F1F5F9",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  urgencyTagText: {
-    color: "#475569",
-    fontSize: 9,
-    fontWeight: "800",
-  },
-  statusPill: {
-    backgroundColor: colors.brandPrimaryLight,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.pill,
   },
-  statusPillText: {
+  urgencyPillText: {
+    color: "#475569",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  statusBadgePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  statusBadgePillText: {
     fontSize: 10,
     fontWeight: "800",
-    color: colors.brandPrimary,
   },
-  reqDetailsGrid: {
+
+  /* Request Info Section */
+  reqInfoSection: {
     backgroundColor: "#F8FAFC",
     borderRadius: radius.md,
     padding: 10,
-    marginVertical: 10,
-    gap: 6,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    gap: 8,
   },
-  reqDetailRow: {
+  reqHospitalRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-  reqDetailText: {
+  reqIconWrapHospital: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reqHospitalTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  reqHospitalSubtitle: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  reqRequesterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  reqIconWrapRequester: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#DBEAFE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reqRequesterTitle: {
     fontSize: 12,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  reqRequesterRelation: {
+    color: "#64748B",
+    fontWeight: "500",
+  },
+  reqRequesterMobile: {
+    fontSize: 11,
+    fontWeight: "600",
     color: "#334155",
   },
-  reqMessageRow: {
+  btnQuickCall: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brandGreen,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    marginLeft: "auto",
+  },
+  btnQuickCallText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  reqMessageSnippet: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 8,
-    marginTop: 2,
+    gap: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
   },
-  reqMessageText: {
+  reqMessageSnippetText: {
     fontSize: 11,
     color: "#64748B",
     fontStyle: "italic",
     flex: 1,
   },
-  reqActionsBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-    paddingTop: 8,
+
+  /* Request Action Container */
+  reqActionContainer: {
+    marginTop: 12,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
+    gap: 8,
   },
-  btnMatchNotify: {
+  fulfilledBanner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    backgroundColor: colors.brandPrimary,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#ECFDF5",
+    paddingVertical: 9,
     borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
   },
-  btnMatchNotifyText: {
-    color: "#FFFFFF",
+  fulfilledBannerText: {
+    color: "#065F46",
     fontSize: 12,
     fontWeight: "800",
   },
-  btnFulfill: {
+  cancelledBanner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    backgroundColor: colors.brandGreen,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radius.pill,
-  },
-  btnFulfillText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  btnReviewing: {
+    justifyContent: "center",
+    gap: 6,
     backgroundColor: "#F1F5F9",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
-  btnReviewingText: {
-    color: "#334155",
-    fontSize: 11,
-    fontWeight: "700",
+  cancelledBannerText: {
+    color: "#64748B",
+    fontSize: 12,
+    fontWeight: "800",
   },
-  btnCancel: {
-    backgroundColor: "#FEF2F2",
+  reqPrimaryActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  btnPrimaryBroadcast: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.brandPrimary,
+    paddingVertical: 9,
     paddingHorizontal: 12,
-    paddingVertical: 8,
     borderRadius: radius.pill,
   },
-  btnCancelText: {
-    color: "#EF4444",
+  btnPrimaryBroadcastText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  btnPrimaryFulfill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brandGreen,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: radius.pill,
+  },
+  btnPrimaryFulfillText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  reqSecondaryActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  btnSecondaryChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  btnSecondaryChipActive: {
+    backgroundColor: "#F3E8FF",
+    borderColor: "#E9D5FF",
+  },
+  btnSecondaryChipText: {
     fontSize: 11,
     fontWeight: "700",
+    color: "#334155",
+  },
+  btnSecondaryChipCancel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  btnSecondaryChipCancelText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#DC2626",
   },
 
   /* Broadcast Card */
@@ -2741,6 +3277,53 @@ const styles = StyleSheet.create({
     color: "#64748B",
     marginBottom: 6,
   },
+  matchSearchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 4,
+    marginBottom: 8,
+    gap: 8,
+  },
+  matchSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: "#0F172A",
+    padding: 0,
+  },
+  matchSelectionBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  matchSelectionCountText: {
+    fontSize: 12,
+    color: "#64748B",
+    fontWeight: "600",
+  },
+  matchQuickBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  matchQuickBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#1D4ED8",
+  },
   matchDonorsList: {
     maxHeight: 280,
     borderWidth: 1,
@@ -2775,6 +3358,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     color: "#0F172A",
+  },
+  matchDonorNameSelected: {
+    color: "#1D4ED8",
+  },
+  selectedPill: {
+    backgroundColor: "#DCFCE7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  selectedPillText: {
+    fontSize: 9,
+    fontWeight: "900",
+    color: "#15803D",
   },
   matchDonorMeta: {
     fontSize: 11,
@@ -2822,9 +3421,20 @@ const styles = StyleSheet.create({
   },
   btnNotifySelected: {
     backgroundColor: "#0F172A",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
     paddingVertical: 12,
     borderRadius: radius.pill,
-    alignItems: "center",
+  },
+  btnNotifySelectedActive: {
+    backgroundColor: colors.brandPrimary,
+    shadowColor: colors.brandPrimary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
   },
   btnNotifyDisabled: {
     backgroundColor: "#CBD5E1",
