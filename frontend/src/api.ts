@@ -871,40 +871,116 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     const reqId = route.split("/")[1];
     let donorIds: string[] = body.donor_ids || [];
 
-    if (!donorIds || donorIds.length === 0) {
-      const { data: request } = await supabase.from("blood_requests").select("*").eq("id", reqId).single();
-      if (request) {
-        const { data: rawDonors } = await supabase
-          .from("donors")
-          .select("*")
-          .eq("blood_group", request.blood_group)
-          .eq("status", "active")
-          .eq("availability", "Available");
-        const eligible = (rawDonors || []).map(toAdminDonor).filter((d) => d.is_eligible);
+    const { data: request } = await supabase.from("blood_requests").select("*").eq("id", reqId).single();
+    if (!request) throw new Error("Blood request not found");
 
-        if (body.scope === "same_area") {
-          const area = (request.hospital_area || request.hospital_city || "").toLowerCase();
-          donorIds = eligible
-            .filter((d) => (d.area && d.area.toLowerCase().includes(area)) || (d.place && d.place.toLowerCase().includes(area)))
-            .map((d) => d.id);
-        } else {
-          donorIds = eligible.map((d) => d.id);
-        }
+    if (!donorIds || donorIds.length === 0) {
+      const { data: rawDonors } = await supabase
+        .from("donors")
+        .select("*")
+        .eq("blood_group", request.blood_group)
+        .eq("status", "active")
+        .eq("availability", "Available");
+      const eligible = (rawDonors || []).map(toAdminDonor).filter((d) => d.is_eligible);
+
+      if (body.scope === "same_area") {
+        const area = (request.hospital_area || request.hospital_city || "").toLowerCase();
+        donorIds = eligible
+          .filter((d) => (d.area && d.area.toLowerCase().includes(area)) || (d.place && d.place.toLowerCase().includes(area)))
+          .map((d) => d.id);
+      } else {
+        donorIds = eligible.map((d) => d.id);
       }
     }
 
-    const message = body.message || "Urgent blood request: Verified donor match needed in Karaikal.";
+    const isReminder = body.is_reminder === true;
+    const defaultMsg = isReminder
+      ? `🚨 REMINDER: Urgent blood requirement for ${request.blood_group} blood at ${request.hospital_name || "Hospital"}, Karaikal. Please respond if you can donate.`
+      : `Urgent blood request: Verified donor match needed for ${request.blood_group} blood in Karaikal.`;
+    const message = body.message || defaultMsg;
 
+    // 1. Fetch targeted donors to get their push_tokens and mobiles
+    const { data: targetDonors } = await supabase
+      .from("donors")
+      .select("id, mobile, push_token, full_name")
+      .in("id", donorIds);
+
+    // 2. Upsert notification records in database
     for (const donorId of donorIds) {
+      const dRec = (targetDonors || []).find((x) => x.id === donorId);
       await supabase.from("notifications").upsert(
         {
           request_id: reqId,
           donor_id: donorId,
+          donor_mobile: dRec?.mobile || null,
           message,
           status: "sent",
+          sent_at: new Date().toISOString(),
         },
         { onConflict: "request_id,donor_id" }
       );
+    }
+
+    // 3. Dispatch Expo Push Notifications (Wakes phone even if app is completely closed)
+    const pushMessages: any[] = [];
+    for (const d of targetDonors || []) {
+      if (d.push_token && (d.push_token.startsWith("ExponentPushToken") || d.push_token.startsWith("ExpoPushToken"))) {
+        pushMessages.push({
+          to: d.push_token,
+          sound: "default",
+          title: `🚨 ${request.urgency === "Emergency" ? "EMERGENCY: " : isReminder ? "REMINDER: " : ""}${request.blood_group} Blood Required`,
+          body: `Patient at ${request.hospital_name || "Karaikal"} urgently needs ${request.blood_group} blood (${request.units_required || 1} Unit). Tap to respond!`,
+          channelId: "emergency-blood-alerts",
+          priority: "high",
+          badge: 1,
+          _displayInForeground: true,
+          data: { request_id: request.request_number || request.id },
+        });
+      }
+    }
+
+    if (pushMessages.length > 0) {
+      try {
+        await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(pushMessages),
+        });
+      } catch (e) {
+        console.warn("[Push] Error sending Expo push notifications:", e);
+      }
+    }
+
+    // 4. Dispatch SMS via Fast2SMS so offline / closed app donors receive mobile text
+    if (FAST2SMS_API_KEY && targetDonors && targetDonors.length > 0) {
+      const mobiles = targetDonors
+        .map((d) => (d.mobile || "").replace(/\D/g, "").slice(-10))
+        .filter((m) => m.length === 10);
+
+      if (mobiles.length > 0) {
+        try {
+          const smsPayload = {
+            route: "q",
+            message: `KK LIFE DROP: Urgent ${request.blood_group} blood needed at ${request.hospital_name || "Hospital"}, Karaikal. Open app to respond.`,
+            language: "english",
+            flash: 0,
+            numbers: mobiles.slice(0, 50).join(","),
+          };
+          await fetch("https://www.fast2sms.com/dev/bulkV2", {
+            method: "POST",
+            headers: {
+              authorization: FAST2SMS_API_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(smsPayload),
+          });
+        } catch (e) {
+          console.warn("[Fast2SMS] Error dispatching broadcast SMS:", e);
+        }
+      }
     }
 
     await supabase.from("blood_requests").update({ status: "Donors Notified" }).eq("id", reqId);
@@ -939,7 +1015,13 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       .eq("donor_id", donor.id)
       .order("sent_at", { ascending: false });
 
-    return { notifications: notifs || [] } as unknown as T;
+    // Normalize so joined blood_requests is accessible as both `request` and `blood_requests`
+    const formatted = (notifs || []).map((item) => ({
+      ...item,
+      request: item.blood_requests || item.request || {},
+    }));
+
+    return { notifications: formatted } as unknown as T;
   }
 
   // 17. Donor Responses (/donor-responses)

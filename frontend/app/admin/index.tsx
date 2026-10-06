@@ -273,6 +273,30 @@ export default function AdminHome() {
     }
   }
 
+  async function sendBroadcastReminder(g: any) {
+    try {
+      setLoading(true);
+      const r: any = await api(`/blood-requests/${g.request_id}/notify`, {
+        auth: true,
+        method: "POST",
+        body: {
+          scope: "all",
+          is_reminder: true,
+        },
+      });
+      toast(
+        "success",
+        "Reminder Alert Broadcasted",
+        `Sent high-priority reminder alert to ${r.notified || g.notified} matching donors for ${g.request_number}`
+      );
+      loadAll();
+    } catch (e: any) {
+      toast("error", "Failed to send reminder", e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function updateStatus(req: any, status: string) {
     try {
       await api(`/admin/blood-requests/${req.id}/status`, { auth: true, method: "PATCH", body: { status } });
@@ -1172,6 +1196,35 @@ export default function AdminHome() {
                 <Text style={styles.broadcastFooterText}>
                   Last Alert Sent: {g.last_sent ? new Date(g.last_sent).toLocaleString() : "—"}
                 </Text>
+              </View>
+
+              {/* REMINDER & ACTION BUTTONS */}
+              <View style={styles.broadcastActionRow}>
+                <Pressable
+                  testID={`remind-broadcast-${g.request_id}`}
+                  style={styles.btnRemindBroadcast}
+                  onPress={() => sendBroadcastReminder(g)}
+                  disabled={loading}
+                >
+                  <Ionicons name="notifications" size={13} color="#FFFFFF" />
+                  <Text style={styles.btnRemindBroadcastText}>Send Reminder (Notify Again)</Text>
+                </Pressable>
+
+                <Pressable
+                  style={styles.btnOpenRequestMatching}
+                  onPress={() => {
+                    const reqObj = requests.find((r) => r.id === g.request_id || r.request_number === g.request_number);
+                    if (reqObj) {
+                      openMatching(reqObj);
+                    } else {
+                      setView("requests");
+                      setRequestSearch(g.request_number || "");
+                    }
+                  }}
+                >
+                  <Ionicons name="people" size={13} color={colors.brandBlue} />
+                  <Text style={styles.btnOpenRequestMatchingText}>Pick Donors by Name</Text>
+                </Pressable>
               </View>
             </View>
           )}
@@ -2942,6 +2995,47 @@ const styles = StyleSheet.create({
   broadcastFooterText: {
     fontSize: 11,
     color: "#64748B",
+  },
+  broadcastActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  btnRemindBroadcast: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "#D97706",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+  },
+  btnRemindBroadcastText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  btnOpenRequestMatching: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: radius.pill,
+  },
+  btnOpenRequestMatchingText: {
+    color: colors.brandBlue,
+    fontSize: 11,
+    fontWeight: "700",
   },
 
   /* Audit Trail */
