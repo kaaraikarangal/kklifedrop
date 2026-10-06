@@ -1082,8 +1082,80 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 23. Admin Notifications History
   if (route === "admin/notifications" || route === "api/admin/notifications") {
-    const { data } = await supabase.from("notifications").select("*, blood_requests(*)").order("sent_at", { ascending: false });
-    return { notifications: data || [] } as unknown as T;
+    const { data } = await supabase
+      .from("notifications")
+      .select("*, blood_requests(*)")
+      .order("sent_at", { ascending: false })
+      .limit(500);
+
+    const rawList = data || [];
+    const groupsMap: Record<string, any> = {};
+
+    for (const item of rawList) {
+      const rid = item.request_id || item.blood_requests?.id || item.id;
+      if (!groupsMap[rid]) {
+        const req = item.blood_requests || {};
+        groupsMap[rid] = {
+          request_id: rid,
+          request_number: req.request_number || item.request_id || "Broadcast Alert",
+          blood_group: req.blood_group || "—",
+          urgency: req.urgency || "Normal",
+          status: req.status || "Donors Notified",
+          patient_name: req.patient_name || "",
+          hospital_name: req.hospital_name || "",
+          notified: 0,
+          responded: 0,
+          can_donate: 0,
+          last_sent: item.sent_at || null,
+        };
+      }
+
+      const g = groupsMap[rid];
+      g.notified += 1;
+      if (item.response) {
+        g.responded += 1;
+        if (item.response === "I Can Donate") {
+          g.can_donate += 1;
+        }
+      }
+      if (!g.last_sent || (item.sent_at && item.sent_at > g.last_sent)) {
+        g.last_sent = item.sent_at;
+      }
+    }
+
+    // Also include any requests with status "Donors Notified" that might not have rows in notifications table
+    const { data: notifiedRequests } = await supabase
+      .from("blood_requests")
+      .select("*")
+      .eq("status", "Donors Notified");
+
+    for (const req of notifiedRequests || []) {
+      if (!groupsMap[req.id]) {
+        groupsMap[req.id] = {
+          request_id: req.id,
+          request_number: req.request_number || "Broadcast Alert",
+          blood_group: req.blood_group || "—",
+          urgency: req.urgency || "Normal",
+          status: req.status || "Donors Notified",
+          patient_name: req.patient_name || "",
+          hospital_name: req.hospital_name || "",
+          notified: 1,
+          responded: 0,
+          can_donate: 0,
+          last_sent: req.updated_at || req.created_at,
+        };
+      }
+    }
+
+    const groups = Object.values(groupsMap).sort((a: any, b: any) =>
+      (b.last_sent || "").localeCompare(a.last_sent || "")
+    );
+
+    return {
+      ok: true,
+      groups,
+      notifications: rawList,
+    } as unknown as T;
   }
 
   // 24. Admin Audit Logs

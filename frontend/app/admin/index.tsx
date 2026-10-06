@@ -136,7 +136,7 @@ export default function AdminHome() {
       setStats(s);
       setDonors((d as any).donors || []);
       setRequests((r as any).requests || []);
-      setNotifs((n as any).groups || []);
+      setNotifs((n as any).groups || (n as any).notifications || []);
       setAuditLogs((a as any).logs || []);
     } catch (e: any) {
       if (
@@ -463,7 +463,7 @@ export default function AdminHome() {
             { id: "dashboard", label: "Overview", icon: "grid-outline" },
             { id: "donors", label: `Donors (${donors.length})`, icon: "people-outline" },
             { id: "requests", label: `Requests (${requests.length})`, icon: "water-outline", badge: emergencyRequests.length },
-            { id: "notifications", label: "Broadcasts", icon: "megaphone-outline" },
+            { id: "notifications", label: `Broadcasts (${notifs.length})`, icon: "megaphone-outline" },
             { id: "audit", label: "Audit Logs", icon: "shield-outline" },
           ].map((tab) => {
             const active = view === tab.id;
@@ -1138,9 +1138,14 @@ export default function AdminHome() {
               <View style={styles.broadcastCardTop}>
                 <BloodGroupBadge group={g.blood_group} size="md" />
                 <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={styles.broadcastTitle}>{g.request_number}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={styles.broadcastTitle}>{g.patient_name ? `${g.patient_name} (${g.blood_group})` : g.request_number}</Text>
+                    <View style={[styles.statusBadgePill, getReqStatusStyle(g.status)]}>
+                      <Text style={[styles.statusBadgePillText, getReqStatusTextStyle(g.status)]}>{g.status}</Text>
+                    </View>
+                  </View>
                   <Text style={styles.broadcastMeta}>
-                    Urgency: <Text style={{ fontWeight: "700", color: g.urgency === "Emergency" ? colors.brandRed : "#0F172A" }}>{g.urgency}</Text> • Status: {g.status}
+                    ID: <Text style={{ fontWeight: "700", color: "#0F172A" }}>{g.request_number}</Text> • Urgency: <Text style={{ fontWeight: "700", color: g.urgency === "Emergency" ? colors.brandRed : "#0F172A" }}>{g.urgency}</Text>
                   </Text>
                 </View>
               </View>
