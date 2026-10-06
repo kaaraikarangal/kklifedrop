@@ -1043,11 +1043,12 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
   }
 
-  // 9. Donors Push Token
+  // 9. Donors & Device Push Token Registration
   if (route === "donors/push-token" || route === "api/donors/push-token") {
     try {
       const rawMobile = await AsyncStorage.getItem(MOBILE_KEY);
-      const cleanMobile = (rawMobile || "").replace(/\D/g, "").slice(-10);
+      const legMobile = await AsyncStorage.getItem("k2_mobile");
+      const cleanMobile = (body.mobile || rawMobile || legMobile || "").replace(/\D/g, "").slice(-10);
       const pushToken = (body.push_token || "").trim();
       const platform = body.platform || (typeof navigator !== "undefined" ? "web" : "expo");
 
@@ -1056,7 +1057,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
         if (!donorId) {
           try {
-            const cachedStr = await AsyncStorage.getItem(DONOR_KEY);
+            const cachedStr = (await AsyncStorage.getItem(DONOR_KEY)) || (await AsyncStorage.getItem("k2_donor"));
             if (cachedStr) {
               const parsed = JSON.parse(cachedStr);
               donorId = parsed?.id || null;
@@ -1064,40 +1065,71 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           } catch {}
         }
 
-        if (!donorId && (cleanMobile || rawMobile)) {
+        if (!donorId && cleanMobile.length === 10) {
           const { data: donor } = await supabase
             .from("donors")
             .select("id")
-            .or(`mobile.eq.${cleanMobile},mobile.eq.${rawMobile}`)
+            .eq("mobile", cleanMobile)
             .limit(1)
             .maybeSingle();
           donorId = donor?.id || null;
         }
 
-        if (donorId) {
-          // Check if token already recorded for this donor
-          const { data: existing } = await supabase
-            .from("audit_logs")
-            .select("id")
-            .eq("action", "donor_push_token")
-            .eq("target_id", donorId)
-            .contains("metadata", { push_token: pushToken })
-            .limit(1);
+        let adminEmail = body.admin_email || null;
+        if (!adminEmail) {
+          try {
+            const adminStr = (await AsyncStorage.getItem(ADMIN_USER_KEY)) || (await AsyncStorage.getItem("k2_admin_user"));
+            if (adminStr) {
+              const parsed = JSON.parse(adminStr);
+              adminEmail = parsed?.email || null;
+            }
+          } catch {}
+        }
 
-          if (!existing || existing.length === 0) {
-            await supabase.from("audit_logs").insert({
-              action: "donor_push_token",
-              target_id: donorId,
-              target_type: "donor",
-              metadata: {
-                push_token: pushToken,
-                mobile: cleanMobile,
-                platform,
-                updated_at: new Date().toISOString(),
-              },
-            });
-            console.log(`[PushToken] Registered push token for donor ${donorId}`);
-          }
+        const targetType = donorId ? "donor" : adminEmail ? "admin" : "device";
+        const targetId = donorId || adminEmail || "global_device";
+
+        // Query existing push token records to update or insert
+        const { data: existing } = await supabase
+          .from("audit_logs")
+          .select("id, target_id, target_type, metadata")
+          .eq("action", "donor_push_token")
+          .order("timestamp", { ascending: false })
+          .limit(100);
+
+        const found = (existing || []).find((row: any) => {
+          const m = row.metadata as any;
+          return m?.push_token === pushToken;
+        });
+
+        const newMeta = {
+          push_token: pushToken,
+          donor_id: donorId || (found?.metadata as any)?.donor_id || null,
+          mobile: cleanMobile || (found?.metadata as any)?.mobile || null,
+          admin_email: adminEmail || (found?.metadata as any)?.admin_email || null,
+          platform,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (found) {
+          await supabase
+            .from("audit_logs")
+            .update({
+              target_id: targetId !== "global_device" ? targetId : found.target_id,
+              target_type: targetType !== "device" ? targetType : found.target_type,
+              metadata: newMeta,
+            })
+            .eq("id", found.id);
+          console.log(`[PushToken] Updated token registration for ${targetId}`);
+        } else {
+          await supabase.from("audit_logs").insert({
+            admin_id: adminEmail || (cleanMobile ? `user:${cleanMobile}` : "system"),
+            action: "donor_push_token",
+            target_id: targetId,
+            target_type: targetType,
+            metadata: newMeta,
+          });
+          console.log(`[PushToken] Registered new push token for ${targetId}`);
         }
       }
     } catch (err) {
@@ -1298,7 +1330,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 14. Notify Donors for Blood Request (Admin only)
   if (route.includes("/notify") && method === "POST") {
-    await requireAdminAuth();
+    const admin = await requireAdminAuth();
     const parts = route.replace(/^api\//, "").split("/");
     const reqId = parts[1];
     let donorIds: string[] = body.donor_ids || [];
@@ -1334,24 +1366,22 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     // 1. Fetch targeted donors to get their mobiles and full names
     const { data: targetDonors } = await supabase
       .from("donors")
-      .select("id, mobile, full_name")
+      .select("id, mobile, full_name, blood_group")
       .in("id", donorIds);
 
-    // Fetch latest push tokens from audit_logs for these donors
+    // Fetch latest push tokens from audit_logs
     const { data: pushLogs } = await supabase
       .from("audit_logs")
-      .select("target_id, metadata, timestamp")
+      .select("id, target_id, target_type, metadata, timestamp")
       .eq("action", "donor_push_token")
-      .in("target_id", donorIds)
       .order("timestamp", { ascending: false });
 
-    const pushTokenMap = new Map<string, string>();
-    for (const log of pushLogs || []) {
-      const meta = log.metadata as any;
-      if (meta?.push_token && !pushTokenMap.has(log.target_id)) {
-        pushTokenMap.set(log.target_id, meta.push_token);
-      }
-    }
+    const targetDonorIds = new Set(donorIds);
+    const targetMobiles = new Set(
+      (targetDonors || [])
+        .map((d) => (d.mobile || "").replace(/\D/g, "").slice(-10))
+        .filter((m) => m.length === 10)
+    );
 
     // 2. Upsert notification records in database
     for (const donorId of donorIds) {
@@ -1369,32 +1399,57 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       );
     }
 
-    // Collect all valid unique tokens associated with the targeted donors
+    // Collect all valid unique tokens associated with targeted donors or active devices
     const donorPushTokens = new Set<string>();
     for (const log of pushLogs || []) {
       const meta = log.metadata as any;
-      const tok = meta?.push_token;
-      if (tok && (tok.startsWith("ExponentPushToken") || tok.startsWith("ExpoPushToken"))) {
+      const tok = (meta?.push_token || "").trim();
+      if (!tok || (!tok.startsWith("ExponentPushToken") && !tok.startsWith("ExpoPushToken"))) {
+        continue;
+      }
+
+      const logMobile = meta.mobile ? String(meta.mobile).replace(/\D/g, "").slice(-10) : "";
+      const logDonorId = meta.donor_id || log.target_id;
+
+      const isTargetDonor = targetDonorIds.has(logDonorId) || (logMobile && targetMobiles.has(logMobile));
+      const isAdminOrDevice =
+        log.target_type === "admin" ||
+        log.target_id === "global_device" ||
+        log.target_id === admin.email;
+
+      if (isTargetDonor || isAdminOrDevice) {
         donorPushTokens.add(tok);
       }
     }
 
     // 3. Dispatch Expo Push Notifications (Wakes phone even if app is completely closed)
     const pushMessages: any[] = [];
+    const urgencyPrefix = request.urgency === "Emergency" ? "🚨 EMERGENCY: " : isReminder ? "🚨 REMINDER: " : "🩸 ";
+    const pushTitle = `${urgencyPrefix}${request.blood_group} Blood Required`;
+    const pushBody = `Patient at ${request.hospital_name || "Karaikal"} urgently needs ${request.blood_group} blood (${request.units_required || 1} Unit). Tap to respond!`;
+
     for (const pushToken of Array.from(donorPushTokens)) {
       pushMessages.push({
         to: pushToken,
         sound: "default",
-        title: `🚨 ${request.urgency === "Emergency" ? "EMERGENCY: " : isReminder ? "REMINDER: " : ""}${request.blood_group} Blood Required`,
-        body: `Patient at ${request.hospital_name || "Karaikal"} urgently needs ${request.blood_group} blood (${request.units_required || 1} Unit). Tap to respond!`,
+        title: pushTitle,
+        body: pushBody,
         channelId: "emergency-blood-alerts",
         priority: "high",
         badge: 1,
         _displayInForeground: true,
-        data: { request_id: request.id, request_number: request.request_number },
+        data: {
+          request_id: request.id,
+          request_number: request.request_number,
+          blood_group: request.blood_group,
+          hospital_name: request.hospital_name,
+          urgency: request.urgency,
+          is_reminder: isReminder,
+        },
       });
     }
 
+    let pushDispatchResult: any = null;
     if (pushMessages.length > 0) {
       const chunkSize = 100;
       for (let i = 0; i < pushMessages.length; i += chunkSize) {
@@ -1410,11 +1465,14 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
             body: JSON.stringify(chunk),
           });
           const expoResult = await expoRes.json();
+          pushDispatchResult = expoResult;
           console.log(`[Push] Dispatched batch of ${chunk.length} push notification(s):`, expoResult);
         } catch (e) {
           console.warn("[Push] Error sending Expo push notifications batch:", e);
         }
       }
+    } else {
+      console.log(`[Push] Note: No push tokens registered yet for ${donorIds.length} target donors.`);
     }
 
     // 4. Dispatch SMS via Fast2SMS
@@ -1452,7 +1510,6 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     await supabase.from("blood_requests").update({ status: "Donors Notified" }).eq("id", reqId);
 
-    const admin = await requireAdminAuth();
     await recordAuditLog({
       actor: admin.email,
       action: "notify_donors",

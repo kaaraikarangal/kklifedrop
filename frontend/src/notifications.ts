@@ -3,7 +3,8 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
-import { api, getToken, MOBILE_KEY } from "./api";
+import { api, getActiveSession, ADMIN_USER_KEY } from "./api";
+import { supabase } from "./supabase";
 import { refreshPendingNotifications } from "./pending-notifications";
 
 export const PUSH_TOKEN_KEY = "kk_push_token";
@@ -58,6 +59,40 @@ export async function setupNotificationChannelsAsync() {
 }
 
 /**
+ * Internal helper to sync a push token and session metadata to the server
+ */
+async function syncTokenPayload(pushToken: string): Promise<void> {
+  if (!pushToken || Platform.OS === "web") return;
+  try {
+    const session = await getActiveSession().catch(() => null);
+    const adminUserStr =
+      (await AsyncStorage.getItem(ADMIN_USER_KEY)) ||
+      (await AsyncStorage.getItem("k2_admin_user"));
+    let adminEmail: string | null = null;
+    if (adminUserStr) {
+      try {
+        adminEmail = JSON.parse(adminUserStr)?.email || null;
+      } catch {}
+    }
+
+    await api("/donors/push-token", {
+      auth: true,
+      body: {
+        push_token: pushToken,
+        mobile: session?.mobile || null,
+        donor_id: session?.donorId || null,
+        admin_email: adminEmail,
+        role: session?.role || (adminEmail ? "admin" : "device"),
+        platform: Platform.OS,
+      },
+    });
+    console.log("[Push] Push token synced with server:", pushToken.slice(0, 25) + "...");
+  } catch (err) {
+    console.warn("[Push] Error syncing push token payload:", err);
+  }
+}
+
+/**
  * Request permission & register device for Expo Push Notifications
  */
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
@@ -98,20 +133,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     const pushToken = tokenData?.data;
     if (pushToken) {
       await AsyncStorage.setItem(PUSH_TOKEN_KEY, pushToken);
-
-      // Attempt immediate sync with backend if user has an active session or mobile
-      const userToken = await getToken();
-      const mobile = (await AsyncStorage.getItem(MOBILE_KEY)) || (await AsyncStorage.getItem("k2_mobile"));
-      if (userToken || mobile) {
-        try {
-          await api("/donors/push-token", {
-            auth: true,
-            body: { push_token: pushToken },
-          });
-        } catch (err) {
-          console.log("[Push] Token sync deferred until next login:", err);
-        }
-      }
+      // Immediately register with backend so server can target this device
+      await syncTokenPayload(pushToken);
     }
 
     return pushToken;
@@ -122,7 +145,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 }
 
 /**
- * Sync cached push token after successful donor login or registration
+ * Sync cached push token after successful donor login, registration, or app focus
  */
 export async function syncPushTokenWithBackend(): Promise<void> {
   if (Platform.OS === "web") return;
@@ -130,13 +153,8 @@ export async function syncPushTokenWithBackend(): Promise<void> {
     let token = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
     if (!token) {
       token = await registerForPushNotificationsAsync();
-    }
-    if (token) {
-      await api("/donors/push-token", {
-        auth: true,
-        body: { push_token: token },
-      });
-      console.log("[Push] Push token synced successfully with server");
+    } else {
+      await syncTokenPayload(token);
     }
   } catch (err) {
     console.log("[Push] Failed to sync push token:", err);
@@ -167,7 +185,7 @@ export async function sendTestLocalNotification(): Promise<boolean> {
 }
 
 /**
- * Attach listeners to handle foreground alerts and lock-screen notification taps
+ * Attach listeners to handle foreground alerts, live Supabase broadcasts, and lock-screen notification taps
  */
 export function setupNotificationListeners() {
   if (Platform.OS === "web") return () => {};
@@ -217,8 +235,61 @@ export function setupNotificationListeners() {
     }
   });
 
+  // 4. Live Supabase Realtime broadcast listener (instant audible alert when broadcast or reminder is created)
+  let channel: any = null;
+  try {
+    channel = supabase
+      .channel("realtime-emergency-blood-alerts")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications" },
+        async (payload: any) => {
+          try {
+            const newNotif = payload?.new;
+            if (!newNotif) return;
+
+            const session = await getActiveSession().catch(() => null);
+            const myDonorId = session?.donorId;
+            const myMobile = session?.mobile ? session.mobile.replace(/\D/g, "").slice(-10) : null;
+            const notifMobile = newNotif.donor_mobile ? String(newNotif.donor_mobile).replace(/\D/g, "").slice(-10) : null;
+
+            // Show alert if targeted at current user OR if current user is admin testing broadcasts
+            const isForMe =
+              (myDonorId && newNotif.donor_id === myDonorId) ||
+              (myMobile && notifMobile === myMobile) ||
+              session?.role === "admin";
+
+            if (isForMe) {
+              const isReminder = (newNotif.message || "").includes("REMINDER");
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: isReminder ? "🚨 Blood Alert: REMINDER" : "🚨 EMERGENCY: Blood Required",
+                  body: newNotif.message || "Urgent blood requirement in Karaikal. Tap to respond!",
+                  sound: "default",
+                  data: {
+                    request_id: newNotif.request_id,
+                    channelId: EMERGENCY_CHANNEL_ID,
+                  },
+                } as any,
+                trigger: null,
+              });
+              await refreshPendingNotifications().catch(() => {});
+            }
+          } catch (e) {
+            console.log("[Push] Realtime notification handler error:", e);
+          }
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    console.log("[Push] Could not initialize realtime channel:", err);
+  }
+
   return () => {
     foregroundSubscription.remove();
     responseSubscription.remove();
+    if (channel) {
+      supabase.removeChannel(channel).catch(() => {});
+    }
   };
 }

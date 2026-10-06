@@ -23,6 +23,8 @@ import { api, clearSession, getActiveSession } from "@/src/api";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
+import * as Notifications from "expo-notifications";
+import { syncPushTokenWithBackend, sendTestLocalNotification, EMERGENCY_CHANNEL_ID } from "@/src/notifications";
 
 type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "subadmins" | "audit";
 
@@ -508,6 +510,7 @@ export default function AdminHome() {
 
   useEffect(() => {
     loadAll();
+    syncPushTokenWithBackend().catch(() => {});
   }, []);
 
   async function logout() {
@@ -616,6 +619,20 @@ export default function AdminHome() {
     try {
       const r: any = await api(`/blood-requests/${request.id}/notify`, { auth: true, body });
       toast("success", "Notifications Broadcasted", `${r.notified} verified donors alerted`);
+      if (Platform.OS !== "web") {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `🚨 EMERGENCY: ${request.blood_group} Blood Required`,
+            body: `Emergency blood requirement at ${request.hospital_name || "Hospital"}, Karaikal. ${r.notified || 0} donors alerted.`,
+            sound: "default",
+            data: {
+              request_id: request.id,
+              channelId: EMERGENCY_CHANNEL_ID,
+            },
+          } as any,
+          trigger: null,
+        }).catch(() => {});
+      }
       setMatchModal({ open: false });
       loadAll();
     } catch (e: any) {
@@ -639,6 +656,20 @@ export default function AdminHome() {
         "Reminder Alert Broadcasted",
         `Sent high-priority reminder alert to ${r.notified || g.notified} matching donors for ${g.request_number}`
       );
+      if (Platform.OS !== "web") {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `🚨 REMINDER: ${g.blood_group || "Blood"} Required`,
+            body: `Urgent requirement for ${g.blood_group} blood at ${g.hospital_name || "Hospital"}, Karaikal.`,
+            sound: "default",
+            data: {
+              request_id: g.request_id,
+              channelId: EMERGENCY_CHANNEL_ID,
+            },
+          } as any,
+          trigger: null,
+        }).catch(() => {});
+      }
       loadAll();
     } catch (e: any) {
       toast("error", "Failed to send reminder", e.message);
@@ -933,6 +964,22 @@ export default function AdminHome() {
         </View>
 
         <View style={styles.headerRight}>
+          <Pressable
+            testID="admin-test-alert"
+            onPress={async () => {
+              const ok = await sendTestLocalNotification();
+              if (ok) {
+                toast("success", "Phone Alert Triggered", "Check notifications shade, banner & sound");
+              } else {
+                toast("info", "Web Platform", "Push alerts run natively on mobile devices");
+              }
+            }}
+            style={[styles.refreshBtn, { backgroundColor: "#FEF2F2", borderColor: "#FECACA" }]}
+            hitSlop={8}
+          >
+            <Ionicons name="notifications-outline" size={17} color="#DC2626" />
+          </Pressable>
+
           <Pressable style={styles.refreshBtn} onPress={loadAll} disabled={loading} hitSlop={8}>
             {loading ? (
               <ActivityIndicator size="small" color={colors.brandBlue} />

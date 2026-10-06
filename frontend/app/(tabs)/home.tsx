@@ -12,6 +12,7 @@ import {
   subscribePendingCount,
   refreshPendingNotifications,
 } from "@/src/pending-notifications";
+import { syncPushTokenWithBackend } from "@/src/notifications";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
@@ -44,6 +45,7 @@ export default function Home() {
   useFocusEffect(
     useCallback(() => {
       refreshPendingNotifications();
+      syncPushTokenWithBackend().catch(() => {});
       if (Platform.OS === "android") {
         const onBackPress = () => {
           BackHandler.exitApp();

@@ -7,7 +7,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { api, clearSession } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { toast } from "@/src/Toast";
-import { sendTestLocalNotification } from "@/src/notifications";
+import { sendTestLocalNotification, syncPushTokenWithBackend } from "@/src/notifications";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -25,6 +25,7 @@ export default function Profile() {
   useFocusEffect(
     useCallback(() => {
       load();
+      syncPushTokenWithBackend().catch(() => {});
     }, [])
   );
 
