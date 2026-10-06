@@ -187,7 +187,32 @@ async def db_count(table: str, col: str = "*", **filters) -> int:
     return r.count or 0
 
 
+async def record_audit_log(
+    actor_id: str,
+    action: str,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
+    metadata: Optional[dict] = None,
+):
+    """Immutable audit trail logging across all user and admin actions."""
+    if not sb:
+        return
+    try:
+        await sb.table("audit_logs").insert({
+            "id": gen_id(),
+            "admin_id": actor_id,
+            "action": action,
+            "target_type": target_type or "system",
+            "target_id": target_id or actor_id,
+            "timestamp": iso(now_utc()),
+            "metadata": metadata or {},
+        }).execute()
+    except Exception as e:
+        logger.error(f"[Audit Log Error] Failed to log {action}: {e}")
+
+
 # ---------------------------------------------------------------------------
+
 # Provider abstractions - Fast2SMS & Mock
 # ---------------------------------------------------------------------------
 async def send_fast2sms_otp(mobile: str, otp: str) -> dict:
@@ -699,6 +724,15 @@ async def send_otp(body: SendOtpIn):
         "expires_at": iso(now_utc() + timedelta(minutes=OTP_EXP_MINUTES)),
         "created_at": iso(now_utc()),
     }).execute()
+
+    await record_audit_log(
+        actor_id=f"user:{clean_mobile}",
+        action="request_otp",
+        target_type="auth",
+        target_id=clean_mobile,
+        metadata={"mobile": clean_mobile, "channel": "whatsapp_or_sms"},
+    )
+
     sms_res = await send_sms(clean_mobile, f"Your KK Life Drop OTP is {otp}. Valid {OTP_EXP_MINUTES} minutes.", otp=otp)
     if SMS_PROVIDER == "fast2sms":
         if sms_res.get("status") != "sent":
@@ -738,6 +772,15 @@ async def verify_otp(body: VerifyOtpIn):
     d = await sb.table("donors").select("*").eq("mobile", body.mobile).execute()
     donor = d.data[0] if d.data else None
     token = make_token(body.mobile, "user")
+
+    await record_audit_log(
+        actor_id=f"user:{clean_mobile}",
+        action="user_login",
+        target_type="auth",
+        target_id=clean_mobile,
+        metadata={"mobile": clean_mobile, "is_registered": donor is not None},
+    )
+
     return {
         "ok": True,
         "token": token,
@@ -756,6 +799,15 @@ async def admin_login(body: AdminLoginIn):
     if admin.get("status") != "active":
         raise HTTPException(403, "Admin account disabled")
     token = make_token(admin["email"], "admin")
+
+    await record_audit_log(
+        actor_id=admin["email"],
+        action="admin_login",
+        target_type="admin",
+        target_id=admin["email"],
+        metadata={"email": admin["email"], "name": admin.get("name")},
+    )
+
     return {"ok": True, "token": token, "admin": {"email": admin["email"], "name": admin.get("name")}}
 
 
@@ -793,6 +845,17 @@ async def register_donor(body: DonorRegistrationIn, user: dict = Depends(current
     }
     try:
         r = await sb.table("donors").insert(doc).execute()
+        await record_audit_log(
+            actor_id=f"user:{body.mobile}",
+            action="donor_registered",
+            target_type="donor",
+            target_id=doc["id"],
+            metadata={
+                "name": body.full_name,
+                "blood_group": body.blood_group,
+                "district": body.district,
+            },
+        )
     except Exception as e:
         raise sb_err(e, "A donor with this mobile already exists")
     return {"ok": True, "donor": to_public_donor(r.data[0])}
@@ -856,6 +919,15 @@ async def update_me(body: DonorUpdateIn, user: dict = Depends(current_user)):
     if not r.data:
         raise HTTPException(404, "Not registered")
     doc = r.data[0]
+
+    await record_audit_log(
+        actor_id=f"user:{user['sub']}",
+        action="donor_status_toggle",
+        target_type="donor",
+        target_id=doc["id"],
+        metadata=updates,
+    )
+
     out = to_public_donor(doc)
     out.update({"mobile": doc.get("mobile"), "email": doc.get("email")})
     return {"ok": True, "donor": out}
@@ -873,6 +945,15 @@ async def delete_my_account(user: dict = Depends(current_user)):
     donor_id = d.data[0]["id"]
     await sb.table("donors").delete().eq("id", donor_id).execute()
     logger.info(f"[Account Deletion] Donor {donor_id} ({mobile}) permanently deleted profile.")
+
+    await record_audit_log(
+        actor_id=f"user:{mobile}",
+        action="delete_account",
+        target_type="donor",
+        target_id=donor_id,
+        metadata={"mobile": mobile, "name": d.data[0].get("full_name")},
+    )
+
     return {"ok": True, "message": "Account and associated donor data permanently deleted."}
 
 
@@ -935,6 +1016,23 @@ async def create_blood_request(body: BloodRequestIn):
         "updated_at": iso(now_utc()),
     }
     await sb.table("blood_requests").insert(doc).execute()
+
+    await record_audit_log(
+        actor_id=f"user:{body.requester_mobile}",
+        action="create_blood_request",
+        target_type="blood_request",
+        target_id=req_num,
+        metadata={
+            "request_number": req_num,
+            "patient_name": body.patient_name,
+            "blood_group": body.blood_group,
+            "units": body.units_required,
+            "hospital": body.hospital_name,
+            "urgency": body.urgency,
+            "requester_name": body.requester_name,
+        },
+    )
+
     return {"ok": True, "request_id": req_num, "id": doc["id"], "status": "Pending"}
 
 
@@ -969,6 +1067,22 @@ async def contact_donor(body: ContactDonorIn):
         "updated_at": iso(now_utc()),
     }
     await sb.table("blood_requests").insert(doc).execute()
+
+    await record_audit_log(
+        actor_id=f"user:{doc['requester_mobile']}",
+        action="contact_donor_request",
+        target_type="blood_request",
+        target_id=req_num,
+        metadata={
+            "request_number": req_num,
+            "patient_name": body.patient_name,
+            "blood_group": body.blood_group,
+            "contacted_donor_id": body.donor_id,
+            "hospital": body.hospital_name,
+            "requester_name": body.requester_name,
+        },
+    )
+
     return {"ok": True, "request_id": req_num, "message": "Your request has been submitted. KK Life Drop admin will contact you shortly."}
 
 
@@ -1167,6 +1281,15 @@ async def donor_response(body: DonorResponseIn):
     }).eq("request_id", body.request_id).eq("donor_id", body.donor_id).execute()
     if body.response == "I Can Donate":
         await sb.table("blood_requests").update({"status": "Donor Found", "updated_at": iso(now_utc())}).eq("id", body.request_id).execute()
+
+    await record_audit_log(
+        actor_id=f"donor:{body.donor_id}",
+        action="donor_response",
+        target_type="blood_request",
+        target_id=body.request_id,
+        metadata={"response": body.response, "donor_id": body.donor_id},
+    )
+
     return {"ok": True, "response": body.response}
 
 
@@ -1419,7 +1542,7 @@ async def admin_update_status(req_id: str, body: UpdateRequestStatusIn, admin: d
 
 
 @api.get("/admin/audit-logs")
-async def admin_audit_logs(limit: int = 100, admin: dict = Depends(current_admin)):
+async def admin_audit_logs(limit: int = 500, admin: dict = Depends(current_admin)):
     r = await sb.table("audit_logs").select("*").order("timestamp", desc=True).limit(limit).execute()
     return {"logs": r.data}
 

@@ -66,6 +66,7 @@ function getReqStatusTextStyle(status: string) {
 
 function getAuditActionMeta(action: string) {
   switch (action) {
+    // Admin actions
     case "admin_login":
       return {
         label: "ADMIN LOGIN",
@@ -120,9 +121,129 @@ function getAuditActionMeta(action: string) {
         badgeBg: "#FFE4E6",
         badgeColor: "#9F1239",
       };
+    case "update_aadhaar":
+      return {
+        label: "AADHAAR UPDATED",
+        icon: "card",
+        color: "#4F46E5",
+        bg: "#EEF2FF",
+        badgeBg: "#E0E7FF",
+        badgeColor: "#3730A3",
+      };
+    case "admin_update_donor":
+      return {
+        label: "DONOR STATUS UPDATED",
+        icon: "pencil",
+        color: "#0891B2",
+        bg: "#ECFEFF",
+        badgeBg: "#CFFAFE",
+        badgeColor: "#155E75",
+      };
+    case "update_request_status":
+      return {
+        label: "REQUEST STATUS UPDATED",
+        icon: "checkmark-done-circle",
+        color: "#EA580C",
+        bg: "#FFF7ED",
+        badgeBg: "#FFEDD5",
+        badgeColor: "#9A3412",
+      };
+    case "view_matching_donors":
+      return {
+        label: "DONOR MATCHES VIEWED",
+        icon: "search",
+        color: "#6366F1",
+        bg: "#EEF2FF",
+        badgeBg: "#E0E7FF",
+        badgeColor: "#4338CA",
+      };
+
+    // User / Donor actions
+    case "user_login":
+      return {
+        label: "USER LOGIN",
+        icon: "finger-print",
+        color: "#16A34A",
+        bg: "#F0FDF4",
+        badgeBg: "#DCFCE7",
+        badgeColor: "#15803D",
+      };
+    case "request_otp":
+      return {
+        label: "OTP REQUESTED",
+        icon: "chatbubble-ellipses",
+        color: "#CA8A04",
+        bg: "#FEFCE8",
+        badgeBg: "#FEF9C3",
+        badgeColor: "#854D0E",
+      };
+    case "donor_registered":
+      return {
+        label: "DONOR REGISTERED",
+        icon: "heart",
+        color: "#D31027",
+        bg: "#FEF2F2",
+        badgeBg: "#FEE2E2",
+        badgeColor: "#991B1B",
+      };
+    case "donor_status_toggle":
+      return {
+        label: "AVAILABILITY TOGGLED",
+        icon: "toggle",
+        color: "#0284C7",
+        bg: "#F0F9FF",
+        badgeBg: "#E0F2FE",
+        badgeColor: "#0369A1",
+      };
+    case "delete_account":
+      return {
+        label: "ACCOUNT DELETED",
+        icon: "trash-bin",
+        color: "#B91C1C",
+        bg: "#FEF2F2",
+        badgeBg: "#FEE2E2",
+        badgeColor: "#7F1D1D",
+      };
+    case "create_blood_request":
+      return {
+        label: "BLOOD REQUEST CREATED",
+        icon: "water",
+        color: "#E11D48",
+        bg: "#FFF1F2",
+        badgeBg: "#FFE4E6",
+        badgeColor: "#9F1239",
+      };
+    case "contact_donor_request":
+      return {
+        label: "DONOR CONTACT INITIATED",
+        icon: "call",
+        color: "#8B5CF6",
+        bg: "#F5F3FF",
+        badgeBg: "#EDE9FE",
+        badgeColor: "#6D28D9",
+      };
+    case "donor_response":
+      return {
+        label: "DONOR RESPONSE",
+        icon: "hand-left",
+        color: "#0D9488",
+        bg: "#F0FDFA",
+        badgeBg: "#CCFBF1",
+        badgeColor: "#115E59",
+      };
+    case "donor_push_token":
+      return {
+        label: "PUSH TOKEN REGISTERED",
+        icon: "notifications",
+        color: "#64748B",
+        bg: "#F8FAFC",
+        badgeBg: "#F1F5F9",
+        badgeColor: "#334155",
+      };
+
     default:
       return {
-        label: (action || "ACTION").toUpperCase(),
+        label: (action || "ACTION").replace(/_/g, " ").toUpperCase(),
         icon: "shield-checkmark",
         color: "#475569",
         bg: "#F8FAFC",
@@ -691,9 +812,36 @@ export default function AdminHome() {
         log.target_id?.toLowerCase().includes(q) ||
         JSON.stringify(log.metadata || {}).toLowerCase().includes(q);
 
-      const matchAction =
-        auditActionFilter === "All" ||
-        log.action?.toLowerCase() === auditActionFilter.toLowerCase();
+      let matchAction = true;
+      if (auditActionFilter === "All") {
+        matchAction = true;
+      } else if (auditActionFilter === "Admins") {
+        matchAction =
+          Boolean(
+            log.action?.startsWith("admin_") ||
+            log.action?.includes("sub_admin") ||
+            ["notify_donors", "reveal_aadhaar", "update_aadhaar", "update_request_status", "view_matching_donors"].includes(log.action)
+          );
+      } else if (auditActionFilter === "Users") {
+        matchAction =
+          Boolean(
+            log.action?.startsWith("user_") ||
+            log.action?.startsWith("donor_") ||
+            ["request_otp", "create_blood_request", "contact_donor_request", "delete_account"].includes(log.action)
+          );
+      } else if (auditActionFilter === "Logins") {
+        matchAction = ["admin_login", "user_login"].includes(log.action);
+      } else if (auditActionFilter === "Requests") {
+        matchAction = ["create_blood_request", "contact_donor_request", "update_request_status", "donor_response"].includes(log.action);
+      } else if (auditActionFilter === "Registrations") {
+        matchAction = ["donor_registered", "create_sub_admin"].includes(log.action);
+      } else if (auditActionFilter === "Broadcasts") {
+        matchAction = log.action === "notify_donors";
+      } else if (auditActionFilter === "Aadhaar") {
+        matchAction = ["reveal_aadhaar", "update_aadhaar"].includes(log.action);
+      } else {
+        matchAction = log.action?.toLowerCase() === auditActionFilter.toLowerCase();
+      }
 
       return matchSearch && matchAction;
     });
@@ -739,15 +887,15 @@ export default function AdminHome() {
             icon: "people-circle-outline",
             activeIcon: "people-circle",
           },
-          {
-            id: "audit" as ViewTab,
-            label: `Audit Logs (${auditLogs.length})`,
-            shortLabel: "Audit",
-            icon: "shield-outline",
-            activeIcon: "shield",
-          },
         ]
       : []),
+    {
+      id: "audit" as ViewTab,
+      label: `Audit Trail (${auditLogs.length})`,
+      shortLabel: "Audit",
+      icon: "shield-outline",
+      activeIcon: "shield",
+    },
   ], [donors.length, requests.length, emergencyRequests.length, notifs.length, subAdmins.length, auditLogs.length, isSuperAdmin]);
 
   const activeTabMeta = navTabs.find((t) => t.id === view) || navTabs[0];
@@ -1634,167 +1782,161 @@ export default function AdminHome() {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 5: AUDIT LOGS & SECURITY (SUPER ADMIN EXCLUSIVE) */}
+      {/* TAB 5: AUDIT LOGS & ACTIVITY TRAIL (USER & ADMIN ACTIONS) */}
       {/* ========================================================================= */}
       {view === "audit" && (
-        !isSuperAdmin ? (
-          <View style={[styles.contentWrap, styles.accessDeniedContainer, { paddingHorizontal: isMobile ? 16 : spacing.lg }]}>
-            <View style={styles.accessDeniedCard}>
-              <View style={styles.accessDeniedIconWrap}>
-                <Ionicons name="lock-closed" size={36} color="#DC2626" />
-              </View>
-              <Text style={styles.accessDeniedTitle}>Super Admin Access Required</Text>
-              <Text style={styles.accessDeniedDesc}>
-                The security and audit trail is strictly reserved for the Super Admin (kaaraikarangal@gmail.com). Sub-admins have access to donor and request operations.
-              </Text>
-              <Pressable style={styles.accessDeniedBtn} onPress={() => setView("dashboard")}>
-                <Ionicons name="arrow-back" size={15} color="#FFFFFF" />
-                <Text style={styles.accessDeniedBtnText}>Return to Dashboard</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : (
-          <FlatList
-            data={filteredAuditLogs}
-            keyExtractor={(a) => a.id}
-            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
-            ListHeaderComponent={
-              <View style={styles.historyHead}>
-                <View style={styles.superAdminHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <Text style={styles.historyHeadTitle}>Security & Audit Log Trail</Text>
-                      <View style={styles.superAdminPill}>
-                        <Text style={styles.superAdminPillText}>SUPER ADMIN ONLY</Text>
-                      </View>
+        <FlatList
+          data={filteredAuditLogs}
+          keyExtractor={(a) => a.id}
+          contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
+          ListHeaderComponent={
+            <View style={styles.historyHead}>
+              <View style={styles.superAdminHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <Text style={styles.historyHeadTitle}>Live Activity & Audit Trail</Text>
+                    <View style={[styles.superAdminPill, { backgroundColor: isSuperAdmin ? "#F3E8FF" : "#EFF6FF" }]}>
+                      <Text style={[styles.superAdminPillText, { color: isSuperAdmin ? "#6B21A8" : "#1D4ED8" }]}>
+                        {isSuperAdmin ? "SUPER ADMIN ACCESS" : "ADMIN AUDIT TRAIL"}
+                      </Text>
                     </View>
-                    <Text style={styles.historyHeadSub}>
-                      Live, immutable ledger tracking admin logins, sub-admin management, Aadhaar decryptions, and broadcasts.
-                    </Text>
                   </View>
-                  <Pressable
-                    style={styles.refreshAuditBtn}
-                    onPress={() => {
-                      api("/admin/audit-logs", { auth: true })
-                        .then((a: any) => {
-                          setAuditLogs(a.logs || []);
-                          toast("info", "Refreshed", "Audit logs up to date");
-                        })
-                        .catch(() => {});
-                    }}
-                  >
-                    <Ionicons name="refresh" size={16} color={colors.brandBlue} />
-                    <Text style={styles.refreshAuditText}>Sync</Text>
-                  </Pressable>
+                  <Text style={styles.historyHeadSub}>
+                    Live, immutable ledger tracking all user actions (logins, registrations, requests, responses) and admin operations (broadcasts, status changes, aadhaar decryptions).
+                  </Text>
+                </View>
+                <Pressable
+                  style={styles.refreshAuditBtn}
+                  onPress={() => {
+                    api("/admin/audit-logs", { auth: true })
+                      .then((a: any) => {
+                        setAuditLogs(a.logs || []);
+                        toast("info", "Refreshed", "Audit logs up to date");
+                      })
+                      .catch(() => {});
+                  }}
+                >
+                  <Ionicons name="refresh" size={16} color={colors.brandBlue} />
+                  <Text style={styles.refreshAuditText}>Sync</Text>
+                </Pressable>
+              </View>
+
+              {/* Audit Search & Action Filter Pills */}
+              <View style={styles.auditFilterBox}>
+                <View style={styles.searchWrap}>
+                  <Ionicons name="search" size={16} color="#94A3B8" />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search by actor, action, target or metadata..."
+                    placeholderTextColor="#94A3B8"
+                    value={auditSearch}
+                    onChangeText={setAuditSearch}
+                  />
+                  {auditSearch ? (
+                    <Pressable onPress={() => setAuditSearch("")}>
+                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                    </Pressable>
+                  ) : null}
                 </View>
 
-                {/* Audit Search & Action Filter Pills */}
-                <View style={styles.auditFilterBox}>
-                  <View style={styles.searchWrap}>
-                    <Ionicons name="search" size={16} color="#94A3B8" />
-                    <TextInput
-                      style={styles.searchInput}
-                      placeholder="Search by admin, action, target or metadata..."
-                      placeholderTextColor="#94A3B8"
-                      value={auditSearch}
-                      onChangeText={setAuditSearch}
-                    />
-                    {auditSearch ? (
-                      <Pressable onPress={() => setAuditSearch("")}>
-                        <Ionicons name="close-circle" size={16} color="#94A3B8" />
-                      </Pressable>
-                    ) : null}
-                  </View>
-
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.auditFilterScroll}>
-                    {[
-                      { id: "All", label: `All (${auditLogs.length})` },
-                      { id: "admin_login", label: "Logins" },
-                      { id: "create_sub_admin", label: "Admin Created" },
-                      { id: "toggle_admin_status", label: "Status Changes" },
-                      { id: "delete_sub_admin", label: "Admin Deleted" },
-                      { id: "reveal_aadhaar", label: "Aadhaar Decrypts" },
-                      { id: "notify_donors", label: "Broadcasts" },
-                    ].map((f) => (
-                      <Pressable
-                        key={f.id}
-                        onPress={() => setAuditActionFilter(f.id)}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.auditFilterScroll}>
+                  {[
+                    { id: "All", label: `All (${auditLogs.length})` },
+                    { id: "Admins", label: "Admin Actions" },
+                    { id: "Users", label: "User Actions" },
+                    { id: "Logins", label: "Logins" },
+                    { id: "Requests", label: "Blood Requests" },
+                    { id: "Registrations", label: "Registrations" },
+                    { id: "Broadcasts", label: "Broadcasts" },
+                    { id: "Aadhaar", label: "Aadhaar" },
+                  ].map((f) => (
+                    <Pressable
+                      key={f.id}
+                      onPress={() => setAuditActionFilter(f.id)}
+                      style={[
+                        styles.auditFilterChip,
+                        auditActionFilter === f.id && styles.auditFilterChipActive,
+                      ]}
+                    >
+                      <Text
                         style={[
-                          styles.auditFilterChip,
-                          auditActionFilter === f.id && styles.auditFilterChipActive,
+                          styles.auditFilterChipText,
+                          auditActionFilter === f.id && styles.auditFilterChipTextActive,
                         ]}
                       >
-                        <Text
-                          style={[
-                            styles.auditFilterChipText,
-                            auditActionFilter === f.id && styles.auditFilterChipTextActive,
-                          ]}
-                        >
-                          {f.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
+                        {f.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="shield-outline" size={40} color="#94A3B8" />
+              <Text style={styles.emptyTitle}>No audit events match your filter</Text>
+              <Text style={styles.emptyDesc}>Try clearing search terms or changing the event category filter.</Text>
+            </View>
+          }
+          renderItem={({ item: a }) => {
+            const actionColors = getAuditActionMeta(a.action);
+            const metaKeys = a.metadata ? Object.keys(a.metadata) : [];
+            const isUserActor = a.admin_id?.startsWith("user:");
+            const isDonorActor = a.admin_id?.startsWith("donor:");
+            const actorDisplay = a.admin_id ? a.admin_id.replace(/^(user:|donor:)/, "") : "System";
+
+            return (
+              <View style={styles.auditRowCard} key={a.id}>
+                <View style={[styles.auditIconWrap, { backgroundColor: actionColors.bg }]}>
+                  <Ionicons name={actionColors.icon as any} size={18} color={actionColors.color} />
                 </View>
-              </View>
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Ionicons name="shield-outline" size={40} color="#94A3B8" />
-                <Text style={styles.emptyTitle}>No audit events match your filter</Text>
-                <Text style={styles.emptyDesc}>Try clearing search terms or changing the event category filter.</Text>
-              </View>
-            }
-            renderItem={({ item: a }) => {
-              const actionColors = getAuditActionMeta(a.action);
-              const metaKeys = a.metadata ? Object.keys(a.metadata) : [];
-              return (
-                <View style={styles.auditRowCard} key={a.id}>
-                  <View style={[styles.auditIconWrap, { backgroundColor: actionColors.bg }]}>
-                    <Ionicons name={actionColors.icon as any} size={18} color={actionColors.color} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <View style={styles.auditRowHeader}>
+                    <View style={[styles.auditBadge, { backgroundColor: actionColors.badgeBg }]}>
+                      <Text style={[styles.auditBadgeText, { color: actionColors.badgeColor }]}>
+                        {actionColors.label}
+                      </Text>
+                    </View>
+                    <Text style={styles.auditTimeText}>
+                      {a.timestamp ? formatAuditTime(a.timestamp) : "—"}
+                    </Text>
                   </View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <View style={styles.auditRowHeader}>
-                      <View style={[styles.auditBadge, { backgroundColor: actionColors.badgeBg }]}>
-                        <Text style={[styles.auditBadgeText, { color: actionColors.badgeColor }]}>
-                          {actionColors.label}
-                        </Text>
-                      </View>
-                      <Text style={styles.auditTimeText}>
-                        {a.timestamp ? formatAuditTime(a.timestamp) : "—"}
-                      </Text>
-                    </View>
 
-                    <View style={styles.auditActorRow}>
-                      <Ionicons name="person-circle-outline" size={14} color="#64748B" />
-                      <Text style={styles.auditActorText}>
-                        Actor: <Text style={{ fontWeight: "800", color: "#0F172A" }}>{a.admin_id || "System"}</Text>
+                  <View style={styles.auditActorRow}>
+                    <Ionicons
+                      name={isUserActor ? "person" : isDonorActor ? "heart" : "shield-checkmark"}
+                      size={13}
+                      color={isUserActor ? "#059669" : isDonorActor ? "#D31027" : "#2563EB"}
+                    />
+                    <Text style={styles.auditActorText}>
+                      {isUserActor ? "User: " : isDonorActor ? "Donor: " : "Admin: "}
+                      <Text style={{ fontWeight: "800", color: "#0F172A" }}>{actorDisplay}</Text>
+                    </Text>
+                    {a.target_type ? (
+                      <Text style={styles.auditTargetText}>
+                        • Target: <Text style={{ fontWeight: "700" }}>{a.target_type}</Text> {a.target_id ? `(${a.target_id.slice(0, 24)})` : ""}
                       </Text>
-                      {a.target_type ? (
-                        <Text style={styles.auditTargetText}>
-                          • Target: <Text style={{ fontWeight: "700" }}>{a.target_type}</Text> {a.target_id ? `(${a.target_id.slice(0, 8)}...)` : ""}
-                        </Text>
-                      ) : null}
-                    </View>
-
-                    {metaKeys.length > 0 ? (
-                      <View style={styles.auditMetaBox}>
-                        {metaKeys.map((k) => (
-                          <View key={k} style={styles.auditMetaChip}>
-                            <Text style={styles.auditMetaKey}>{k}:</Text>
-                            <Text style={styles.auditMetaVal}>
-                              {typeof a.metadata[k] === "object" ? JSON.stringify(a.metadata[k]) : String(a.metadata[k])}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
                     ) : null}
                   </View>
+
+                  {metaKeys.length > 0 ? (
+                    <View style={styles.auditMetaBox}>
+                      {metaKeys.map((k) => (
+                        <View key={k} style={styles.auditMetaChip}>
+                          <Text style={styles.auditMetaKey}>{k}:</Text>
+                          <Text style={styles.auditMetaVal}>
+                            {typeof a.metadata[k] === "object" ? JSON.stringify(a.metadata[k]) : String(a.metadata[k])}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
                 </View>
-              );
-            }}
-          />
-        )
+              </View>
+            );
+          }}
+        />
       )}
 
       {/* ========================================================================= */}

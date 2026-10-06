@@ -159,6 +159,30 @@ export async function requireAdminAuth(): Promise<{ id: string; email: string; i
   return { id: adminUser.id, email: adminUser.email, is_super_admin: isSuperAdmin };
 }
 
+/**
+ * Record an immutable audit log entry in Supabase for user and admin traceability.
+ */
+export async function recordAuditLog(params: {
+  actor: string;
+  action: string;
+  target_type: "donor" | "blood_request" | "sub_admin" | "admin" | "system" | "notification" | "auth" | "user";
+  target_id: string;
+  metadata?: Record<string, any>;
+}) {
+  try {
+    await supabase.from("audit_logs").insert({
+      admin_id: params.actor,
+      action: params.action,
+      target_type: params.target_type,
+      target_id: params.target_id,
+      timestamp: new Date().toISOString(),
+      metadata: params.metadata || {},
+    });
+  } catch (err) {
+    console.warn(`[AuditLog] Could not record audit log (${params.action}):`, err);
+  }
+}
+
 export interface ActiveSession {
   isLoggedIn: boolean;
   role: "user" | "admin" | null;
@@ -597,6 +621,19 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     // Call Fast2SMS WhatsApp endpoint via secure POST (template → session fallback)
     const waResult = await sendWhatsAppOtp(cleanMobile, otp);
 
+    await recordAuditLog({
+      actor: `user:${cleanMobile}`,
+      action: "request_otp",
+      target_type: "auth",
+      target_id: cleanMobile,
+      metadata: {
+        mobile: cleanMobile,
+        provider: "whatsapp",
+        method: waResult.method,
+        delivered: waResult.delivered,
+      },
+    });
+
     const successMsg = waResult.delivered
       ? "Verification code sent to your WhatsApp successfully"
       : "Verification code generated — check your WhatsApp";
@@ -725,6 +762,19 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       await AsyncStorage.setItem(DONOR_KEY, JSON.stringify(toPublicDonor(donorDoc)));
     }
 
+    await recordAuditLog({
+      actor: `user:${cleanMobile}`,
+      action: "user_login",
+      target_type: "user",
+      target_id: cleanMobile,
+      metadata: {
+        mobile: cleanMobile,
+        is_registered: donorDoc !== null,
+        donor_name: donorDoc?.full_name || null,
+        blood_group: donorDoc?.blood_group || null,
+      },
+    });
+
     return {
       ok: true,
       token: sessionToken,
@@ -778,13 +828,12 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     await AsyncStorage.setItem(ADMIN_USER_KEY, JSON.stringify(adminUser));
 
     // Log admin login to audit_logs
-    await supabase.from("audit_logs").insert({
-      admin_id: admin.email,
+    await recordAuditLog({
+      actor: admin.email,
       action: "admin_login",
-      target_type: "system",
-      target_id: isSuperAdmin ? "super_admin_console" : "sub_admin_console",
-      timestamp: new Date().toISOString(),
-      metadata: { email: admin.email, role: adminRole, is_super_admin: isSuperAdmin },
+      target_type: "admin",
+      target_id: admin.email,
+      metadata: { email: admin.email, role: adminRole, is_super_admin: isSuperAdmin, name: adminUser.name },
     });
 
     return {
@@ -864,6 +913,22 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
       const pub = toPublicDonor(data);
       await AsyncStorage.setItem(DONOR_KEY, JSON.stringify(pub));
+
+      await recordAuditLog({
+        actor: `user:${cleanMobile}`,
+        action: "donor_registered",
+        target_type: "donor",
+        target_id: data.id,
+        metadata: {
+          full_name: data.full_name,
+          blood_group: data.blood_group,
+          area: data.area,
+          place: data.place,
+          district: data.district,
+          masked_aadhaar: masked,
+        },
+      });
+
       return { ok: true, donor: pub } as unknown as T;
     }
   }
@@ -904,6 +969,19 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (uErr) throw new Error(uErr.message);
       const pub = toPublicDonor(updated);
       await AsyncStorage.setItem(DONOR_KEY, JSON.stringify(pub));
+
+      await recordAuditLog({
+        actor: `user:${mobile}`,
+        action: "donor_status_toggle",
+        target_type: "donor",
+        target_id: donorDoc.id,
+        metadata: {
+          donor_name: donorDoc.full_name,
+          availability: updates.availability || donorDoc.availability,
+          donation_opt_in: updates.donation_opt_in !== undefined ? updates.donation_opt_in : donorDoc.donation_opt_in,
+        },
+      });
+
       return { ok: true, donor: pub } as unknown as T;
     }
 
@@ -911,6 +989,20 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       // Permanent Account Deletion required by Apple Guideline 5.1.1(v) & Google Play
       await supabase.from("donors").delete().eq("id", donorDoc.id);
       await clearSession();
+
+      await recordAuditLog({
+        actor: `user:${mobile}`,
+        action: "delete_account",
+        target_type: "donor",
+        target_id: donorDoc.id,
+        metadata: {
+          donor_name: donorDoc.full_name,
+          mobile: donorDoc.mobile,
+          blood_group: donorDoc.blood_group,
+          reason: "User requested permanent account and data deletion",
+        },
+      });
+
       return { ok: true } as unknown as T;
     }
   }
@@ -1041,6 +1133,23 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (error) throw new Error(error.message);
 
       const assignedNumber = data?.request_number || requestNumber;
+
+      await recordAuditLog({
+        actor: `user:${insertData.requester_mobile}`,
+        action: "create_blood_request",
+        target_type: "blood_request",
+        target_id: assignedNumber,
+        metadata: {
+          request_number: assignedNumber,
+          patient_name: insertData.patient_name,
+          blood_group: insertData.blood_group,
+          units: insertData.units_required,
+          hospital: insertData.hospital_name,
+          urgency: insertData.urgency,
+          requester_name: insertData.requester_name,
+        },
+      });
+
       return {
         ok: true,
         request_id: assignedNumber,
@@ -1078,6 +1187,21 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     const { data } = await supabase.from("blood_requests").insert(insertData).select().single();
     const assignedNumber = data?.request_number || requestNumber;
+
+    await recordAuditLog({
+      actor: `user:${insertData.requester_mobile}`,
+      action: "contact_donor_request",
+      target_type: "blood_request",
+      target_id: assignedNumber,
+      metadata: {
+        request_number: assignedNumber,
+        patient_name: insertData.patient_name,
+        blood_group: insertData.blood_group,
+        hospital: insertData.hospital_name,
+        contacted_donor_id: insertData.donor_id_contacted,
+        requester_name: insertData.requester_name,
+      },
+    });
 
     return {
       ok: true,
@@ -1291,6 +1415,23 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
 
     await supabase.from("blood_requests").update({ status: "Donors Notified" }).eq("id", reqId);
+
+    const admin = await requireAdminAuth();
+    await recordAuditLog({
+      actor: admin.email,
+      action: "notify_donors",
+      target_type: "blood_request",
+      target_id: reqId,
+      metadata: {
+        request_number: request.request_number,
+        blood_group: request.blood_group,
+        hospital: request.hospital_name,
+        notified_count: donorIds.length,
+        is_reminder: isReminder,
+        sent_by: admin.email,
+      },
+    });
+
     return { ok: true, count: donorIds.length, notified: donorIds.length } as unknown as T;
   }
 
@@ -1370,6 +1511,20 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       .eq("request_id", request_id)
       .eq("donor_id", donor_id);
 
+    const rawMobile = await AsyncStorage.getItem(MOBILE_KEY);
+    await recordAuditLog({
+      actor: `donor:${donor_id}`,
+      action: "donor_response",
+      target_type: "blood_request",
+      target_id: request_id,
+      metadata: {
+        donor_id,
+        mobile: rawMobile,
+        response,
+        request_id,
+      },
+    });
+
     return { ok: true } as unknown as T;
   }
 
@@ -1425,7 +1580,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 20. Admin Reveal Aadhaar (Strictly requires authenticated admin session)
   if (route.includes("/aadhaar") && (route.includes("admin/donors") || route.includes("donors/"))) {
-    await requireAdminAuth();
+    const admin = await requireAdminAuth();
     const match = route.match(/donors\/([^/]+)\/aadhaar/);
     const donorId = match ? match[1] : "";
     try {
@@ -1433,6 +1588,13 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         body: { donor_id: donorId },
       });
       if (!error && data && data.decrypted) {
+        await recordAuditLog({
+          actor: admin.email,
+          action: "reveal_aadhaar",
+          target_type: "donor",
+          target_id: donorId,
+          metadata: { revealed_by: admin.email, decrypted: true },
+        });
         return data as unknown as T;
       }
     } catch (e) {
@@ -1447,6 +1609,14 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       .single();
 
     if (donor) {
+      await recordAuditLog({
+        actor: admin.email,
+        action: "reveal_aadhaar",
+        target_type: "donor",
+        target_id: donorId,
+        metadata: { revealed_by: admin.email, masked: donor.masked_aadhaar },
+      });
+
       if (donor.encrypted_aadhaar?.startsWith("ENCR_")) {
         const raw = donor.encrypted_aadhaar.replace("ENCR_", "");
         const formatted = `${raw.slice(0, 4)} ${raw.slice(4, 8)} ${raw.slice(8, 12)}`;
@@ -1464,7 +1634,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 21. Admin Update Donor Status & Rekey Aadhaar
   if (route.startsWith("admin/donors/") || route.startsWith("api/admin/donors/")) {
-    await requireAdminAuth();
+    const admin = await requireAdminAuth();
     const donorId = route.replace(/^(api\/)?admin\/donors\//, "");
     const updates: any = {};
     if (body.status) updates.status = body.status;
@@ -1476,26 +1646,50 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (clean.length === 12) {
         updates.encrypted_aadhaar = `ENCR_${clean}`;
         updates.masked_aadhaar = `XXXX XXXX ${clean.slice(-4)}`;
-        await supabase.from("audit_logs").insert({
+        await recordAuditLog({
+          actor: admin.email,
           action: "update_aadhaar",
           target_type: "donor",
           target_id: donorId,
-          timestamp: new Date().toISOString(),
-          metadata: { masked: updates.masked_aadhaar },
+          metadata: { masked: updates.masked_aadhaar, updated_by: admin.email },
         });
       }
     }
 
     await supabase.from("donors").update(updates).eq("id", donorId);
+
+    await recordAuditLog({
+      actor: admin.email,
+      action: "admin_update_donor",
+      target_type: "donor",
+      target_id: donorId,
+      metadata: {
+        updated_by: admin.email,
+        updates,
+      },
+    });
+
     return { ok: true } as unknown as T;
   }
 
   // 22. Admin Blood Request Status Update
   if (route.includes("admin/blood-requests") && route.endsWith("/status")) {
-    await requireAdminAuth();
+    const admin = await requireAdminAuth();
     const parts = route.split("/");
     const reqId = parts[parts.length - 2];
     await supabase.from("blood_requests").update({ status: body.status }).eq("id", reqId);
+
+    await recordAuditLog({
+      actor: admin.email,
+      action: "update_request_status",
+      target_type: "blood_request",
+      target_id: reqId,
+      metadata: {
+        new_status: body.status,
+        updated_by: admin.email,
+      },
+    });
+
     return { ok: true, status: body.status } as unknown as T;
   }
 
@@ -1581,7 +1775,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   // 24. Admin Audit Logs
   if (route === "admin/audit-logs" || route === "api/admin/audit-logs") {
     await requireAdminAuth();
-    const { data } = await supabase.from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(150);
+    const { data } = await supabase.from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(500);
     return { logs: data || [] } as unknown as T;
   }
 
