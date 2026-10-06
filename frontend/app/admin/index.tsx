@@ -11,17 +11,21 @@ import {
   Linking,
   ActivityIndicator,
   useWindowDimensions,
+  Alert,
+  Platform,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
-import { api, clearSession } from "@/src/api";
+import { api, clearSession, getActiveSession } from "@/src/api";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
 
-type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "audit";
+type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "subadmins" | "audit";
+
 
 const GROUPS = ["All", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const STATUSES = ["All", "Pending", "Admin Reviewing", "Donors Notified", "Donor Found", "Fulfilled", "Cancelled"];
@@ -60,10 +64,107 @@ function getReqStatusTextStyle(status: string) {
   }
 }
 
+function getAuditActionMeta(action: string) {
+  switch (action) {
+    case "admin_login":
+      return {
+        label: "ADMIN LOGIN",
+        icon: "log-in",
+        color: "#2563EB",
+        bg: "#EFF6FF",
+        badgeBg: "#DBEAFE",
+        badgeColor: "#1E40AF",
+      };
+    case "create_sub_admin":
+      return {
+        label: "SUB-ADMIN CREATED",
+        icon: "person-add",
+        color: "#059669",
+        bg: "#ECFDF5",
+        badgeBg: "#D1FAE5",
+        badgeColor: "#065F46",
+      };
+    case "toggle_admin_status":
+      return {
+        label: "ADMIN STATUS CHANGED",
+        icon: "swap-horizontal",
+        color: "#D97706",
+        bg: "#FFFBEB",
+        badgeBg: "#FEF3C7",
+        badgeColor: "#92400E",
+      };
+    case "delete_sub_admin":
+      return {
+        label: "ADMIN DELETED",
+        icon: "trash",
+        color: "#DC2626",
+        bg: "#FEF2F2",
+        badgeBg: "#FEE2E2",
+        badgeColor: "#991B1B",
+      };
+    case "reveal_aadhaar":
+      return {
+        label: "AADHAAR REVEALED",
+        icon: "eye",
+        color: "#7C3AED",
+        bg: "#F5F3FF",
+        badgeBg: "#EDE9FE",
+        badgeColor: "#5B21B6",
+      };
+    case "notify_donors":
+      return {
+        label: "BROADCAST DISPATCHED",
+        icon: "megaphone",
+        color: "#E11D48",
+        bg: "#FFF1F2",
+        badgeBg: "#FFE4E6",
+        badgeColor: "#9F1239",
+      };
+    default:
+      return {
+        label: (action || "ACTION").toUpperCase(),
+        icon: "shield-checkmark",
+        color: "#475569",
+        bg: "#F8FAFC",
+        badgeBg: "#E2E8F0",
+        badgeColor: "#334155",
+      };
+  }
+}
+
+function formatAuditTime(ts: string) {
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    let relative = "";
+    if (diffMins < 1) relative = "Just now";
+    else if (diffMins < 60) relative = `${diffMins}m ago`;
+    else if (diffHours < 24) relative = `${diffHours}h ago`;
+    else if (diffDays < 7) relative = `${diffDays}d ago`;
+
+    const formatted = d.toLocaleString("en-IN", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+    return relative ? `${relative} • ${formatted}` : formatted;
+  } catch {
+    return ts;
+  }
+}
+
 export default function AdminHome() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
-  const isMobile = windowWidth < 680;
+  const isMobile = windowWidth < 768;
   const [view, setView] = useState<ViewTab>("dashboard");
   const [stats, setStats] = useState<any>(null);
   const [donors, setDonors] = useState<any[]>([]);
@@ -81,6 +182,29 @@ export default function AdminHome() {
   const [requestSearch, setRequestSearch] = useState("");
   const [selectedReqStatus, setSelectedReqStatus] = useState("All");
   const [selectedUrgency, setSelectedUrgency] = useState("All");
+
+  // Super Admin & Sub-Admins State
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [currentAdminUser, setCurrentAdminUser] = useState<any>(null);
+  const [subAdmins, setSubAdmins] = useState<any[]>([]);
+  const [subAdminSearch, setSubAdminSearch] = useState("");
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditActionFilter, setAuditActionFilter] = useState("All");
+  const [createAdminModal, setCreateAdminModal] = useState<{
+    open: boolean;
+    name: string;
+    email: string;
+    password: string;
+    showPassword?: boolean;
+    submitting: boolean;
+  }>({
+    open: false,
+    name: "",
+    email: "",
+    password: "",
+    showPassword: false,
+    submitting: false,
+  });
 
   // Modals
   const [aadhaarModal, setAadhaarModal] = useState<{
@@ -126,18 +250,36 @@ export default function AdminHome() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [s, d, r, n, a] = await Promise.all([
+      const session = await getActiveSession();
+      if (!session.isLoggedIn || session.role !== "admin") {
+        await clearSession();
+        router.replace("/auth/admin-login");
+        return;
+      }
+
+      const [s, d, r, n, a, me, sa] = await Promise.all([
         api("/admin/stats", { auth: true }),
         api("/admin/donors", { auth: true }),
         api("/blood-requests", { auth: true }),
         api("/admin/notifications", { auth: true }),
         api("/admin/audit-logs", { auth: true }).catch(() => ({ logs: [] })),
+        api("/admin/me", { auth: true }).catch(() => ({ admin: null })),
+        api("/admin/sub-admins", { auth: true }).catch(() => ({ admins: [] })),
       ]);
       setStats(s);
       setDonors((d as any).donors || []);
       setRequests((r as any).requests || []);
       setNotifs((n as any).groups || (n as any).notifications || []);
       setAuditLogs((a as any).logs || []);
+
+      const adminMe = (me as any)?.admin;
+      setCurrentAdminUser(adminMe);
+      const isSuper = Boolean(
+        adminMe?.is_super_admin ||
+        adminMe?.email?.toLowerCase() === "kaaraikarangal@gmail.com"
+      );
+      setIsSuperAdmin(isSuper);
+      setSubAdmins((sa as any)?.admins || []);
     } catch (e: any) {
       if (
         e.message?.includes("auth") ||
@@ -155,6 +297,93 @@ export default function AdminHome() {
       setLoading(false);
     }
   }
+
+  async function handleCreateSubAdmin() {
+    if (!createAdminModal.name.trim()) return toast("error", "Missing", "Enter full name");
+    if (!createAdminModal.email.trim()) return toast("error", "Missing", "Enter valid email");
+    if (createAdminModal.password.length < 6) return toast("error", "Password too short", "Min 6 characters");
+
+    setCreateAdminModal((p) => ({ ...p, submitting: true }));
+    try {
+      await api("/admin/sub-admins", {
+        method: "POST",
+        body: {
+          name: createAdminModal.name.trim(),
+          email: createAdminModal.email.trim(),
+          password: createAdminModal.password.trim(),
+        },
+      });
+      toast("success", "Sub-Admin Created", `${createAdminModal.name} was added successfully.`);
+      setCreateAdminModal({ open: false, name: "", email: "", password: "", submitting: false });
+
+      const [sa, a] = await Promise.all([
+        api("/admin/sub-admins", { auth: true }),
+        api("/admin/audit-logs", { auth: true }),
+      ]);
+      setSubAdmins((sa as any).admins || []);
+      setAuditLogs((a as any).logs || []);
+    } catch (e: any) {
+      toast("error", "Creation Failed", e.message);
+      setCreateAdminModal((p) => ({ ...p, submitting: false }));
+    }
+  }
+
+  async function handleToggleSubAdminStatus(adminId: string, currentStatus: string, adminName: string) {
+    try {
+      const newStatus = currentStatus === "active" ? "suspended" : "active";
+      await api("/admin/sub-admins", {
+        method: "PATCH",
+        body: { admin_id: adminId, status: newStatus },
+      });
+      toast("info", "Status Updated", `${adminName} status is now ${newStatus}`);
+
+      const [sa, a] = await Promise.all([
+        api("/admin/sub-admins", { auth: true }),
+        api("/admin/audit-logs", { auth: true }),
+      ]);
+      setSubAdmins((sa as any).admins || []);
+      setAuditLogs((a as any).logs || []);
+    } catch (e: any) {
+      toast("error", "Failed", e.message);
+    }
+  }
+
+  async function handleDeleteSubAdmin(adminId: string, adminName: string) {
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm(`Permanently remove sub-admin "${adminName}"?`)) {
+        performDeleteSubAdmin(adminId, adminName);
+      }
+      return;
+    }
+    Alert.alert(
+      "Delete Sub-Admin",
+      `Are you sure you want to permanently delete sub-admin "${adminName}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete Permanently", style: "destructive", onPress: () => performDeleteSubAdmin(adminId, adminName) },
+      ]
+    );
+  }
+
+  async function performDeleteSubAdmin(adminId: string, adminName: string) {
+    try {
+      await api("/admin/sub-admins", {
+        method: "DELETE",
+        body: { admin_id: adminId },
+      });
+      toast("success", "Deleted", `Sub-admin ${adminName} has been removed.`);
+
+      const [sa, a] = await Promise.all([
+        api("/admin/sub-admins", { auth: true }),
+        api("/admin/audit-logs", { auth: true }),
+      ]);
+      setSubAdmins((sa as any).admins || []);
+      setAuditLogs((a as any).logs || []);
+    } catch (e: any) {
+      toast("error", "Deletion Failed", e.message);
+    }
+  }
+
 
   useEffect(() => {
     loadAll();
@@ -436,6 +665,93 @@ export default function AdminHome() {
     return requests.filter((r) => r.urgency === "Emergency" && !["Fulfilled", "Cancelled"].includes(r.status));
   }, [requests]);
 
+  // Sub-Admins Filtered
+  const filteredSubAdmins = useMemo(() => {
+    const q = (subAdminSearch || "").trim().toLowerCase();
+    return subAdmins.filter((a) => {
+      if (!q) return true;
+      return (
+        a.name?.toLowerCase().includes(q) ||
+        a.email?.toLowerCase().includes(q) ||
+        a.status?.toLowerCase().includes(q) ||
+        a.role?.toLowerCase().includes(q)
+      );
+    });
+  }, [subAdmins, subAdminSearch]);
+
+  // Audit Logs Filtered
+  const filteredAuditLogs = useMemo(() => {
+    return auditLogs.filter((log) => {
+      const q = (auditSearch || "").trim().toLowerCase();
+      const matchSearch =
+        !q ||
+        log.action?.toLowerCase().includes(q) ||
+        log.admin_id?.toLowerCase().includes(q) ||
+        log.target_type?.toLowerCase().includes(q) ||
+        log.target_id?.toLowerCase().includes(q) ||
+        JSON.stringify(log.metadata || {}).toLowerCase().includes(q);
+
+      const matchAction =
+        auditActionFilter === "All" ||
+        log.action?.toLowerCase() === auditActionFilter.toLowerCase();
+
+      return matchSearch && matchAction;
+    });
+  }, [auditLogs, auditSearch, auditActionFilter]);
+
+  // Unified Admin Navigation Configuration
+  const navTabs = useMemo(() => [
+    {
+      id: "dashboard" as ViewTab,
+      label: "Overview",
+      shortLabel: "Overview",
+      icon: "grid-outline",
+      activeIcon: "grid",
+    },
+    {
+      id: "donors" as ViewTab,
+      label: `Donors (${donors.length})`,
+      shortLabel: "Donors",
+      icon: "people-outline",
+      activeIcon: "people",
+    },
+    {
+      id: "requests" as ViewTab,
+      label: `Requests (${requests.length})`,
+      shortLabel: "Requests",
+      icon: "water-outline",
+      activeIcon: "water",
+      badge: emergencyRequests.length > 0 ? emergencyRequests.length : undefined,
+    },
+    {
+      id: "notifications" as ViewTab,
+      label: `Broadcasts (${notifs.length})`,
+      shortLabel: "Alerts",
+      icon: "megaphone-outline",
+      activeIcon: "megaphone",
+    },
+    ...(isSuperAdmin
+      ? [
+          {
+            id: "subadmins" as ViewTab,
+            label: `Sub-Admins (${subAdmins.length})`,
+            shortLabel: "Admins",
+            icon: "people-circle-outline",
+            activeIcon: "people-circle",
+          },
+          {
+            id: "audit" as ViewTab,
+            label: `Audit Logs (${auditLogs.length})`,
+            shortLabel: "Audit",
+            icon: "shield-outline",
+            activeIcon: "shield",
+          },
+        ]
+      : []),
+  ], [donors.length, requests.length, emergencyRequests.length, notifs.length, subAdmins.length, auditLogs.length, isSuperAdmin]);
+
+  const activeTabMeta = navTabs.find((t) => t.id === view) || navTabs[0];
+
   return (
     <View style={styles.root}>
       {/* ========================================================================= */}
@@ -448,16 +764,22 @@ export default function AdminHome() {
             <View style={{ marginLeft: 8 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 <Text style={styles.headerMobileTitle}>KK Life Drop</Text>
-                <View style={styles.adminBadgeSmall}>
-                  <Text style={styles.adminBadgeSmallText}>ADMIN</Text>
+                <View style={[styles.adminBadgeSmall, isSuperAdmin && { backgroundColor: "#7C3AED" }]}>
+                  <Text style={styles.adminBadgeSmallText}>
+                    {isSuperAdmin ? "★ SUPER ADMIN" : "SUB-ADMIN"}
+                  </Text>
                 </View>
               </View>
-              <Text style={styles.headerMobileSub}>Kaarai Karangal</Text>
+              <Text style={styles.headerMobileSub} numberOfLines={1}>
+                {activeTabMeta.label}
+              </Text>
             </View>
           ) : (
-            <View style={styles.adminBadge}>
-              <Ionicons name="shield-checkmark" size={12} color="#FFFFFF" />
-              <Text style={styles.adminBadgeText}>ADMIN CONTROL</Text>
+            <View style={[styles.adminBadge, isSuperAdmin && { backgroundColor: "#4338CA" }]}>
+              <Ionicons name={isSuperAdmin ? "shield-checkmark" : "shield-outline"} size={13} color="#FFFFFF" />
+              <Text style={styles.adminBadgeText}>
+                {isSuperAdmin ? "★ SUPER ADMIN CONTROL" : "SUB-ADMIN CONTROL"}
+              </Text>
             </View>
           )}
         </View>
@@ -479,43 +801,39 @@ export default function AdminHome() {
       </View>
 
       {/* ========================================================================= */}
-      {/* NAVIGATION TABS */}
+      {/* NAVIGATION TABS (Shown on Desktop & Wide Tablets) */}
       {/* ========================================================================= */}
-      <View style={styles.tabsContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
-          {[
-            { id: "dashboard", label: "Overview", icon: "grid-outline" },
-            { id: "donors", label: `Donors (${donors.length})`, icon: "people-outline" },
-            { id: "requests", label: `Requests (${requests.length})`, icon: "water-outline", badge: emergencyRequests.length },
-            { id: "notifications", label: `Broadcasts (${notifs.length})`, icon: "megaphone-outline" },
-            { id: "audit", label: "Audit Logs", icon: "shield-outline" },
-          ].map((tab) => {
-            const active = view === tab.id;
-            return (
-              <Pressable
-                key={tab.id}
-                testID={`admin-tab-${tab.id}`}
-                onPress={() => setView(tab.id as ViewTab)}
-                style={[styles.tab, active && styles.tabActive]}
-              >
-                <Ionicons name={tab.icon as any} size={15} color={active ? "#FFFFFF" : "#64748B"} />
-                <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
-                {tab.badge ? (
-                  <View style={styles.tabUrgentBadge}>
-                    <Text style={styles.tabUrgentText}>{tab.badge}</Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
+      {!isMobile && (
+        <View style={styles.tabsContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
+            {navTabs.map((tab) => {
+              const active = view === tab.id;
+              return (
+                <Pressable
+                  key={tab.id}
+                  testID={`admin-tab-${tab.id}`}
+                  onPress={() => setView(tab.id)}
+                  style={[styles.tab, active && styles.tabActive]}
+                >
+                  <Ionicons name={(active ? tab.activeIcon : tab.icon) as any} size={15} color={active ? "#FFFFFF" : "#64748B"} />
+                  <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
+                  {tab.badge ? (
+                    <View style={styles.tabUrgentBadge}>
+                      <Text style={styles.tabUrgentText}>{tab.badge}</Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
 
       {/* ========================================================================= */}
       {/* TAB 1: EXECUTIVE DASHBOARD */}
       {/* ========================================================================= */}
       {view === "dashboard" && stats && (
-        <ScrollView contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + 32 }]} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]} showsVerticalScrollIndicator={false}>
           {/* System Status Ribbon */}
           <View style={[styles.systemRibbon, isMobile && { flexDirection: "column", alignItems: "flex-start", gap: 4, paddingVertical: 8, paddingHorizontal: 10 }]}>
             <View style={styles.systemIndicator}>
@@ -680,6 +998,39 @@ export default function AdminHome() {
               </View>
             </View>
           </View>
+
+          {/* Registered NGO Organization Details Card */}
+          <View style={[styles.cardBox, { backgroundColor: "#FDF4FF", borderColor: "#F5D0FE" }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "#7C3AED", alignItems: "center", justifyContent: "center" }}>
+                <Ionicons name="business" size={18} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: "900", color: "#4C1D95" }}>Kaarai Karangal</Text>
+                <Text style={{ fontSize: 11, color: "#6D28D9", fontWeight: "600" }}>Social Service Organization • Super Admin Headquarters</Text>
+              </View>
+            </View>
+            <View style={{ gap: 6, marginTop: 4 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="location-sharp" size={14} color="#7C3AED" />
+                <Text style={{ fontSize: 12, color: "#4C1D95", fontWeight: "600", flex: 1 }}>
+                  K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India.
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="mail" size={14} color="#7C3AED" />
+                <Text style={{ fontSize: 12, color: "#4C1D95", fontWeight: "700" }}>
+                  kaaraikarangal@gmail.com
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="call" size={14} color="#7C3AED" />
+                <Text style={{ fontSize: 12, color: "#4C1D95", fontWeight: "700" }}>
+                  +91 9750807463
+                </Text>
+              </View>
+            </View>
+          </View>
         </ScrollView>
       )}
 
@@ -720,43 +1071,53 @@ export default function AdminHome() {
             </ScrollView>
 
             <View style={styles.subFilterRow}>
-              {["All", "Available", "Not Available"].map((av) => (
-                <Pressable
-                  key={av}
-                  style={[styles.availChip, selectedAvailability === av && styles.availChipActive]}
-                  onPress={() => setSelectedAvailability(av)}
-                >
-                  <Text style={[styles.availChipText, selectedAvailability === av && styles.availChipTextActive]}>
-                    {av}
-                  </Text>
-                </Pressable>
-              ))}
-              <Text style={styles.resultCountText}>{filteredDonors.length} donors found</Text>
+              <View style={styles.filterChipSubRow}>
+                {["All", "Available", "Not Available"].map((av) => (
+                  <Pressable
+                    key={av}
+                    style={[styles.availChip, selectedAvailability === av && styles.availChipActive]}
+                    onPress={() => setSelectedAvailability(av)}
+                  >
+                    <Text style={[styles.availChipText, selectedAvailability === av && styles.availChipTextActive]}>
+                      {av}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.filterCountBadge}>
+                <Ionicons name="people" size={11} color="#475569" />
+                <Text style={styles.filterCountBadgeText}>
+                  {filteredDonors.length} {filteredDonors.length === 1 ? "donor" : "donors"}
+                </Text>
+              </View>
             </View>
 
-            <View style={[styles.subFilterRow, { marginTop: 6, paddingTop: 4, borderTopWidth: 1, borderTopColor: "#F1F5F9" }]}>
-              {(["All", "Eligible", "Resting"] as const).map((rst) => (
-                <Pressable
-                  key={rst}
-                  style={[
-                    styles.availChip,
-                    donorRestFilter === rst && styles.availChipActive,
-                    rst === "Resting" && donorRestFilter === "Resting" && { backgroundColor: "#D97706" },
-                  ]}
-                  onPress={() => setDonorRestFilter(rst)}
-                >
-                  <Text style={[styles.availChipText, donorRestFilter === rst && styles.availChipTextActive]}>
-                    {rst === "All" ? "All Rest Status" : rst === "Resting" ? "🕒 Resting (3 Mo)" : "✓ Eligible"}
-                  </Text>
-                </Pressable>
-              ))}
+            <View style={[styles.subFilterRow, { marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#F1F5F9" }]}>
+              <Text style={styles.filterGroupLabel}>REST STATUS:</Text>
+              <View style={styles.filterChipSubRow}>
+                {(["All", "Eligible", "Resting"] as const).map((rst) => (
+                  <Pressable
+                    key={rst}
+                    style={[
+                      styles.availChip,
+                      donorRestFilter === rst && styles.availChipActive,
+                      rst === "Resting" && donorRestFilter === "Resting" && { backgroundColor: "#D97706" },
+                    ]}
+                    onPress={() => setDonorRestFilter(rst)}
+                  >
+                    <Text style={[styles.availChipText, donorRestFilter === rst && styles.availChipTextActive]}>
+                      {rst === "All" ? "All" : rst === "Resting" ? "🕒 Resting (3 Mo)" : "✓ Eligible"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
           </View>
 
           <FlatList
             data={filteredDonors}
             keyExtractor={(d) => d.id}
-            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + 32 }]}
+            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Ionicons name="people-outline" size={40} color="#94A3B8" />
@@ -854,68 +1215,109 @@ export default function AdminHome() {
                   </Pressable>
                 </View>
 
-                {/* KEY INFO TILES */}
+                {/* 2-COLUMN IDENTITY & CONTACT CARDS */}
                 <View style={styles.donorInfoTilesRow}>
-                  <Pressable style={styles.infoTile} onPress={() => Linking.openURL(`tel:+91${d.mobile}`)}>
-                    <Text style={styles.infoTileLabel}>MOBILE (TAP TO CALL)</Text>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-                      <Ionicons name="call" size={12} color={colors.brandBlue} />
-                      <Text style={styles.infoTileValuePhone}>+91 {d.mobile}</Text>
+                  <Pressable
+                    style={styles.infoTileCard}
+                    onPress={() => Linking.openURL(`tel:+91${d.mobile}`)}
+                  >
+                    <View style={styles.infoTileHeader}>
+                      <Text style={styles.infoTileLabel}>MOBILE CONTACT</Text>
+                      <View style={styles.tapCallBadge}>
+                        <Ionicons name="call" size={9} color={colors.brandBlue} />
+                        <Text style={styles.tapCallText}>Call</Text>
+                      </View>
                     </View>
+                    <Text style={styles.infoTileValuePhone} numberOfLines={1}>
+                      +91 {d.mobile}
+                    </Text>
                   </Pressable>
 
-                  <View style={styles.infoTile}>
-                    <Text style={styles.infoTileLabel}>GOVT AADHAAR</Text>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-                      <Ionicons name="shield-checkmark" size={12} color="#64748B" />
-                      <Text style={styles.infoTileValueAadhaar}>{d.masked_aadhaar}</Text>
+                  <View style={styles.infoTileCard}>
+                    <View style={styles.infoTileHeader}>
+                      <Text style={styles.infoTileLabel}>GOVT AADHAAR</Text>
+                      <Ionicons name="shield-checkmark" size={11} color="#64748B" />
                     </View>
-                  </View>
-
-                  <View style={styles.infoTile}>
-                    <Text style={styles.infoTileLabel}>GENDER / DOB</Text>
-                    <Text style={styles.infoTileValue} numberOfLines={1}>
-                      {d.gender || "—"}, {d.date_of_birth ? d.date_of_birth : "—"}
+                    <Text style={styles.infoTileValueAadhaar} numberOfLines={1}>
+                      {d.masked_aadhaar || "XXXX XXXX XXXX"}
                     </Text>
                   </View>
                 </View>
 
-                {/* ACTION TOOLBAR */}
+                {/* DEMOGRAPHICS & PROFILE METADATA ROW */}
+                <View style={styles.donorDemographicsRow}>
+                  <View style={styles.demoChip}>
+                    <Ionicons name="person-outline" size={12} color="#64748B" />
+                    <Text style={styles.demoChipText}>{d.gender || "Gender: —"}</Text>
+                  </View>
+                  <View style={styles.demoDivider} />
+                  <View style={styles.demoChip}>
+                    <Ionicons name="calendar-outline" size={12} color="#64748B" />
+                    <Text style={styles.demoChipText}>DOB: {d.date_of_birth || "—"}</Text>
+                  </View>
+                  <View style={styles.demoDivider} />
+                  <View style={styles.demoChip}>
+                    <Ionicons name="navigate-outline" size={12} color="#64748B" />
+                    <Text style={styles.demoChipText}>{d.area || d.district || "Karaikal"}</Text>
+                  </View>
+                </View>
+
+                {/* ACTION TOOLBAR: PROFESSIONAL BALANCED GRID */}
                 <View style={styles.donorActionBar}>
-                  <Pressable
-                    testID={`reveal-aadhaar-${d.id}`}
-                    style={styles.actionBtnReveal}
-                    onPress={() => revealAadhaar(d)}
-                  >
-                    <Ionicons name="eye" size={14} color="#FFFFFF" />
-                    <Text style={styles.actionBtnRevealText}>Reveal Aadhaar</Text>
-                  </Pressable>
+                  {/* Primary Actions: Equal 50/50 split */}
+                  <View style={styles.donorActionMainRow}>
+                    <Pressable
+                      testID={`reveal-aadhaar-${d.id}`}
+                      style={styles.actionBtnReveal}
+                      onPress={() => revealAadhaar(d)}
+                    >
+                      <Ionicons name="eye" size={13} color="#FFFFFF" />
+                      <Text style={styles.actionBtnRevealText}>Reveal Aadhaar</Text>
+                    </Pressable>
 
-                  <Pressable
-                    style={[styles.actionBtnAvailToggle, d.availability === "Available" ? styles.availToggleActive : styles.availToggleInactive]}
-                    onPress={() => toggleDonorAvailability(d)}
-                  >
-                    <Ionicons
-                      name={d.availability === "Available" ? "pause-circle-outline" : "play-circle-outline"}
-                      size={14}
-                      color={d.availability === "Available" ? "#92400E" : "#065F46"}
-                    />
-                    <Text style={[styles.actionBtnAvailToggleText, { color: d.availability === "Available" ? "#92400E" : "#065F46" }]}>
-                      {d.availability === "Available" ? "Mark Unavailable" : "Mark Available"}
-                    </Text>
-                  </Pressable>
+                    <Pressable
+                      style={[
+                        styles.actionBtnAvailToggle,
+                        d.availability === "Available" ? styles.availToggleActive : styles.availToggleInactive,
+                      ]}
+                      onPress={() => toggleDonorAvailability(d)}
+                    >
+                      <Ionicons
+                        name={d.availability === "Available" ? "pause-circle-outline" : "play-circle-outline"}
+                        size={13}
+                        color={d.availability === "Available" ? "#92400E" : "#065F46"}
+                      />
+                      <Text
+                        style={[
+                          styles.actionBtnAvailToggleText,
+                          { color: d.availability === "Available" ? "#92400E" : "#065F46" },
+                        ]}
+                      >
+                        {d.availability === "Available" ? "Mark Unavailable" : "Mark Available"}
+                      </Text>
+                    </Pressable>
+                  </View>
 
+                  {/* Secondary/Danger Action: Symmetrical Full Width */}
                   <Pressable
-                    style={[styles.actionBtnStatusToggle, d.status === "active" ? styles.statusBtnSuspend : styles.statusBtnActivate]}
+                    style={[
+                      styles.actionBtnStatusToggle,
+                      d.status === "active" ? styles.statusBtnSuspend : styles.statusBtnActivate,
+                    ]}
                     onPress={() => toggleDonorStatus(d)}
                   >
                     <Ionicons
                       name={d.status === "active" ? "ban-outline" : "checkmark-circle-outline"}
-                      size={14}
+                      size={13}
                       color={d.status === "active" ? "#DC2626" : colors.brandBlue}
                     />
-                    <Text style={[styles.actionBtnStatusToggleText, { color: d.status === "active" ? "#DC2626" : colors.brandBlue }]}>
-                      {d.status === "active" ? "Suspend" : "Activate"}
+                    <Text
+                      style={[
+                        styles.actionBtnStatusToggleText,
+                        { color: d.status === "active" ? "#DC2626" : colors.brandBlue },
+                      ]}
+                    >
+                      {d.status === "active" ? "Suspend Donor Profile" : "Activate Donor Profile"}
                     </Text>
                   </Pressable>
                 </View>
@@ -986,7 +1388,7 @@ export default function AdminHome() {
           <FlatList
             data={filteredRequests}
             keyExtractor={(r) => r.id}
-            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + 32 }]}
+            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Ionicons name="water-outline" size={40} color="#94A3B8" />
@@ -1143,7 +1545,7 @@ export default function AdminHome() {
         <FlatList
           data={notifs}
           keyExtractor={(n) => n.request_id || n.id}
-          contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + 32 }]}
+          contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
           ListHeaderComponent={
             <View style={styles.historyHead}>
               <Text style={styles.historyHeadTitle}>Broadcast Alerts History</Text>
@@ -1232,54 +1634,347 @@ export default function AdminHome() {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 5: AUDIT LOGS & SECURITY */}
+      {/* TAB 5: AUDIT LOGS & SECURITY (SUPER ADMIN EXCLUSIVE) */}
       {/* ========================================================================= */}
       {view === "audit" && (
-        <FlatList
-          data={auditLogs}
-          keyExtractor={(a) => a.id}
-          contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + 32 }]}
-          ListHeaderComponent={
-            <View style={styles.historyHead}>
-              <Text style={styles.historyHeadTitle}>Security & Access Audit Trail</Text>
-              <Text style={styles.historyHeadSub}>
-                Immutable record of privileged operations (e.g. Aadhaar reveals, donor notifications)
+        !isSuperAdmin ? (
+          <View style={[styles.contentWrap, styles.accessDeniedContainer, { paddingHorizontal: isMobile ? 16 : spacing.lg }]}>
+            <View style={styles.accessDeniedCard}>
+              <View style={styles.accessDeniedIconWrap}>
+                <Ionicons name="lock-closed" size={36} color="#DC2626" />
+              </View>
+              <Text style={styles.accessDeniedTitle}>Super Admin Access Required</Text>
+              <Text style={styles.accessDeniedDesc}>
+                The security and audit trail is strictly reserved for the Super Admin (kaaraikarangal@gmail.com). Sub-admins have access to donor and request operations.
               </Text>
+              <Pressable style={styles.accessDeniedBtn} onPress={() => setView("dashboard")}>
+                <Ionicons name="arrow-back" size={15} color="#FFFFFF" />
+                <Text style={styles.accessDeniedBtnText}>Return to Dashboard</Text>
+              </Pressable>
             </View>
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="shield-outline" size={40} color="#94A3B8" />
-              <Text style={styles.emptyTitle}>Audit log is clean</Text>
-              <Text style={styles.emptyDesc}>Sensitive actions like Aadhaar access are recorded automatically.</Text>
-            </View>
-          }
-          renderItem={({ item: a }) => (
-            <View style={styles.auditRowCard}>
-              <View style={styles.auditIconWrap}>
-                <Ionicons
-                  name={a.action === "reveal_aadhaar" ? "eye" : "notifications"}
-                  size={16}
-                  color={colors.brandBlue}
-                />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <Text style={styles.auditActionText}>{a.action?.toUpperCase?.()}</Text>
-                  <Text style={styles.auditTimeText}>
-                    {a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : "—"}
-                  </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filteredAuditLogs}
+            keyExtractor={(a) => a.id}
+            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
+            ListHeaderComponent={
+              <View style={styles.historyHead}>
+                <View style={styles.superAdminHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <Text style={styles.historyHeadTitle}>Security & Audit Log Trail</Text>
+                      <View style={styles.superAdminPill}>
+                        <Text style={styles.superAdminPillText}>SUPER ADMIN ONLY</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.historyHeadSub}>
+                      Live, immutable ledger tracking admin logins, sub-admin management, Aadhaar decryptions, and broadcasts.
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.refreshAuditBtn}
+                    onPress={() => {
+                      api("/admin/audit-logs", { auth: true })
+                        .then((a: any) => {
+                          setAuditLogs(a.logs || []);
+                          toast("info", "Refreshed", "Audit logs up to date");
+                        })
+                        .catch(() => {});
+                    }}
+                  >
+                    <Ionicons name="refresh" size={16} color={colors.brandBlue} />
+                    <Text style={styles.refreshAuditText}>Sync</Text>
+                  </Pressable>
                 </View>
-                <Text style={styles.auditDetailText}>
-                  Admin: {a.admin_id} • Target: {a.target_type} ({a.target_id?.slice?.(0, 8)}...)
-                </Text>
-                {a.metadata ? (
-                  <Text style={styles.auditMetaText}>Meta: {JSON.stringify(a.metadata)}</Text>
-                ) : null}
+
+                {/* Audit Search & Action Filter Pills */}
+                <View style={styles.auditFilterBox}>
+                  <View style={styles.searchWrap}>
+                    <Ionicons name="search" size={16} color="#94A3B8" />
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search by admin, action, target or metadata..."
+                      placeholderTextColor="#94A3B8"
+                      value={auditSearch}
+                      onChangeText={setAuditSearch}
+                    />
+                    {auditSearch ? (
+                      <Pressable onPress={() => setAuditSearch("")}>
+                        <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.auditFilterScroll}>
+                    {[
+                      { id: "All", label: `All (${auditLogs.length})` },
+                      { id: "admin_login", label: "Logins" },
+                      { id: "create_sub_admin", label: "Admin Created" },
+                      { id: "toggle_admin_status", label: "Status Changes" },
+                      { id: "delete_sub_admin", label: "Admin Deleted" },
+                      { id: "reveal_aadhaar", label: "Aadhaar Decrypts" },
+                      { id: "notify_donors", label: "Broadcasts" },
+                    ].map((f) => (
+                      <Pressable
+                        key={f.id}
+                        onPress={() => setAuditActionFilter(f.id)}
+                        style={[
+                          styles.auditFilterChip,
+                          auditActionFilter === f.id && styles.auditFilterChipActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.auditFilterChipText,
+                            auditActionFilter === f.id && styles.auditFilterChipTextActive,
+                          ]}
+                        >
+                          {f.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                </View>
               </View>
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Ionicons name="shield-outline" size={40} color="#94A3B8" />
+                <Text style={styles.emptyTitle}>No audit events match your filter</Text>
+                <Text style={styles.emptyDesc}>Try clearing search terms or changing the event category filter.</Text>
+              </View>
+            }
+            renderItem={({ item: a }) => {
+              const actionColors = getAuditActionMeta(a.action);
+              const metaKeys = a.metadata ? Object.keys(a.metadata) : [];
+              return (
+                <View style={styles.auditRowCard} key={a.id}>
+                  <View style={[styles.auditIconWrap, { backgroundColor: actionColors.bg }]}>
+                    <Ionicons name={actionColors.icon as any} size={18} color={actionColors.color} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <View style={styles.auditRowHeader}>
+                      <View style={[styles.auditBadge, { backgroundColor: actionColors.badgeBg }]}>
+                        <Text style={[styles.auditBadgeText, { color: actionColors.badgeColor }]}>
+                          {actionColors.label}
+                        </Text>
+                      </View>
+                      <Text style={styles.auditTimeText}>
+                        {a.timestamp ? formatAuditTime(a.timestamp) : "—"}
+                      </Text>
+                    </View>
+
+                    <View style={styles.auditActorRow}>
+                      <Ionicons name="person-circle-outline" size={14} color="#64748B" />
+                      <Text style={styles.auditActorText}>
+                        Actor: <Text style={{ fontWeight: "800", color: "#0F172A" }}>{a.admin_id || "System"}</Text>
+                      </Text>
+                      {a.target_type ? (
+                        <Text style={styles.auditTargetText}>
+                          • Target: <Text style={{ fontWeight: "700" }}>{a.target_type}</Text> {a.target_id ? `(${a.target_id.slice(0, 8)}...)` : ""}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {metaKeys.length > 0 ? (
+                      <View style={styles.auditMetaBox}>
+                        {metaKeys.map((k) => (
+                          <View key={k} style={styles.auditMetaChip}>
+                            <Text style={styles.auditMetaKey}>{k}:</Text>
+                            <Text style={styles.auditMetaVal}>
+                              {typeof a.metadata[k] === "object" ? JSON.stringify(a.metadata[k]) : String(a.metadata[k])}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+              );
+            }}
+          />
+        )
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 6: SUB-ADMIN GOVERNANCE (SUPER ADMIN EXCLUSIVE) */}
+      {/* ========================================================================= */}
+      {view === "subadmins" && (
+        !isSuperAdmin ? (
+          <View style={[styles.contentWrap, styles.accessDeniedContainer, { paddingHorizontal: isMobile ? 16 : spacing.lg }]}>
+            <View style={styles.accessDeniedCard}>
+              <View style={styles.accessDeniedIconWrap}>
+                <Ionicons name="shield-half-outline" size={36} color="#DC2626" />
+              </View>
+              <Text style={styles.accessDeniedTitle}>Sub-Admin Creation Restricted</Text>
+              <Text style={styles.accessDeniedDesc}>
+                Admin creation and permission management is strictly reserved for the Super Admin (kaaraikarangal@gmail.com).
+              </Text>
+              <Pressable style={styles.accessDeniedBtn} onPress={() => setView("dashboard")}>
+                <Ionicons name="arrow-back" size={15} color="#FFFFFF" />
+                <Text style={styles.accessDeniedBtnText}>Return to Dashboard</Text>
+              </Pressable>
             </View>
-          )}
-        />
+          </View>
+        ) : (
+          <FlatList
+            data={filteredSubAdmins}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
+            ListHeaderComponent={
+              <View style={styles.subAdminsHead}>
+                {/* Super Admin Announcement Banner */}
+                <View style={styles.superAdminNoticeBanner}>
+                  <View style={styles.superAdminNoticeIcon}>
+                    <Ionicons name="shield-checkmark" size={24} color="#7C3AED" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.superAdminNoticeTitle}>Super Admin Master Console</Text>
+                    <Text style={styles.superAdminNoticeDesc}>
+                      You are authenticated as <Text style={{ fontWeight: "800", color: "#4C1D95" }}>kaaraikarangal@gmail.com</Text> (Super Admin). Only you can create, suspend, or delete sub-admin accounts.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Sub-Admins Actions Bar */}
+                <View style={styles.subAdminsActionBar}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.historyHeadTitle}>Administrator Governance</Text>
+                    <Text style={styles.historyHeadSub}>
+                      Sub-admins have access to donors, requests, and notifications, but cannot create or manage other admins.
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.btnCreateAdminPrimary}
+                    onPress={() => setCreateAdminModal({ open: true, name: "", email: "", password: "", submitting: false })}
+                  >
+                    <Ionicons name="person-add" size={16} color="#FFFFFF" />
+                    <Text style={styles.btnCreateAdminPrimaryText}>+ Create Sub-Admin</Text>
+                  </Pressable>
+                </View>
+
+                {/* Search Bar */}
+                <View style={[styles.searchWrap, { marginTop: 12 }]}>
+                  <Ionicons name="search" size={16} color="#94A3B8" />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search admins by name, email, or status..."
+                    placeholderTextColor="#94A3B8"
+                    value={subAdminSearch}
+                    onChangeText={setSubAdminSearch}
+                  />
+                  {subAdminSearch ? (
+                    <Pressable onPress={() => setSubAdminSearch("")}>
+                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Ionicons name="people-outline" size={40} color="#94A3B8" />
+                <Text style={styles.emptyTitle}>No Sub-Admins Found</Text>
+                <Text style={styles.emptyDesc}>Click "+ Create Sub-Admin" to grant operational access to another team member.</Text>
+              </View>
+            }
+            renderItem={({ item: adm }) => {
+              const isItemSuper = adm.is_super_admin || adm.email?.toLowerCase() === "kaaraikarangal@gmail.com";
+              const isSuspended = adm.status === "suspended";
+
+              return (
+                <View style={[styles.adminUserCard, isItemSuper && styles.adminUserCardSuper]}>
+                  <View style={styles.adminCardTop}>
+                    <View style={[styles.adminAvatarCircle, isItemSuper && styles.adminAvatarCircleSuper]}>
+                      <Ionicons
+                        name={isItemSuper ? "star" : "person"}
+                        size={20}
+                        color={isItemSuper ? "#7C3AED" : colors.brandBlue}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <Text style={styles.adminCardName}>{adm.name || (isItemSuper ? "Super Administrator" : "Admin")}</Text>
+                        {isItemSuper ? (
+                          <View style={styles.superBadgePill}>
+                            <Ionicons name="star" size={10} color="#FFFFFF" />
+                            <Text style={styles.superBadgePillText}>SUPER ADMIN</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.subBadgePill}>
+                            <Text style={styles.subBadgePillText}>SUB-ADMIN</Text>
+                          </View>
+                        )}
+                        <View style={[styles.statusBadgePill, isSuspended ? styles.statusSuspendedPill : styles.statusActivePill]}>
+                          <Text style={[styles.statusBadgePillText, isSuspended ? styles.statusSuspendedPillText : styles.statusActivePillText]}>
+                            {isSuspended ? "SUSPENDED" : "ACTIVE"}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.adminCardEmail}>{adm.email}</Text>
+                      <Text style={styles.adminCardDate}>
+                        Joined: {adm.created_at ? new Date(adm.created_at).toLocaleDateString() : "Master Seed"}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.adminCardPermissionsRow}>
+                    <Ionicons
+                      name={isItemSuper ? "shield-checkmark" : "shield-half"}
+                      size={14}
+                      color={isItemSuper ? "#7C3AED" : "#64748B"}
+                    />
+                    <Text style={styles.adminCardPermissionsText}>
+                      {isItemSuper
+                        ? "Master Authority: Full Operational Control + Sub-Admin Governance + Audit Logs"
+                        : "Operational Access: Donors, Requests, Broadcasts (Admin creation blocked)"}
+                    </Text>
+                  </View>
+
+                  {/* Actions for Sub-Admins */}
+                  {!isItemSuper ? (
+                    <View style={styles.adminCardActionsRow}>
+                      <Pressable
+                        style={[
+                          styles.btnAdminAction,
+                          isSuspended ? styles.btnAdminActivate : styles.btnAdminSuspend,
+                        ]}
+                        onPress={() => handleToggleSubAdminStatus(adm.id, adm.status, adm.name || adm.email)}
+                      >
+                        <Ionicons
+                          name={isSuspended ? "checkmark-circle-outline" : "pause-circle-outline"}
+                          size={14}
+                          color={isSuspended ? "#059669" : "#D97706"}
+                        />
+                        <Text style={[styles.btnAdminActionText, isSuspended ? { color: "#059669" } : { color: "#D97706" }]}>
+                          {isSuspended ? "Reactivate Access" : "Suspend Access"}
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[styles.btnAdminAction, styles.btnAdminDelete]}
+                        onPress={() => handleDeleteSubAdmin(adm.id, adm.name || adm.email)}
+                      >
+                        <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                        <Text style={[styles.btnAdminActionText, { color: "#DC2626" }]}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View style={styles.immutableRootNotice}>
+                      <Ionicons name="lock-closed" size={13} color="#6D28D9" />
+                      <Text style={styles.immutableRootText}>
+                        Root Super Admin account cannot be suspended or deleted.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            }}
+          />
+        )
       )}
 
       {/* ========================================================================= */}
@@ -1839,6 +2534,226 @@ export default function AdminHome() {
           </View>
         </View>
       </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL: CREATE NEW SUB-ADMIN (SUPER ADMIN ONLY) */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={createAdminModal.open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!createAdminModal.submitting) {
+            setCreateAdminModal((p) => ({ ...p, open: false }));
+          }
+        }}
+      >
+        <View style={styles.modalBg}>
+          <View style={styles.createSubAdminCard} testID="create-subadmin-modal">
+            {/* Modal Header */}
+            <View style={styles.createSubAdminHeader}>
+              <View style={styles.createSubAdminHeaderLeft}>
+                <View style={styles.createSubAdminHeaderIconWrap}>
+                  <Ionicons name="person-add" size={20} color="#7C3AED" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.createSubAdminTitle}>Create New Sub-Administrator</Text>
+                  <Text style={styles.createSubAdminSubtitle}>
+                    Grant delegated operational privileges to team member
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => {
+                  if (!createAdminModal.submitting) {
+                    setCreateAdminModal((p) => ({ ...p, open: false }));
+                  }
+                }}
+                style={styles.modalCloseCircleBtn}
+                hitSlop={8}
+                testID="close-subadmin-modal"
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </Pressable>
+            </View>
+
+            {/* Modal Body */}
+            <ScrollView
+              style={styles.createSubAdminBody}
+              contentContainerStyle={{ paddingBottom: 6 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Permission & Security Information Callout */}
+              <View style={styles.roleNoticeCard}>
+                <Ionicons name="shield-checkmark" size={18} color="#7C3AED" style={{ marginTop: 2 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.roleNoticeTitle}>Delegated Operations Only</Text>
+                  <Text style={styles.roleNoticeDesc}>
+                    Sub-admins can view donors, fulfill blood requests, and send alerts. They <Text style={{ fontWeight: "800", color: "#5B21B6" }}>cannot</Text> create, modify, or remove other administrators.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Form Input: Full Name */}
+              <View style={styles.formGroup}>
+                <View style={styles.formLabelRow}>
+                  <Text style={styles.formLabel}>Full Name / Display Name</Text>
+                  <Text style={styles.formRequiredStar}>*</Text>
+                </View>
+                <View style={styles.formInputContainer}>
+                  <Ionicons name="person-outline" size={17} color="#64748B" />
+                  <TextInput
+                    style={styles.formTextInput}
+                    placeholder="e.g. Arun Kumar"
+                    placeholderTextColor="#94A3B8"
+                    value={createAdminModal.name}
+                    onChangeText={(val) => setCreateAdminModal((p) => ({ ...p, name: val }))}
+                    autoCapitalize="words"
+                  />
+                </View>
+              </View>
+
+              {/* Form Input: Official Email Address */}
+              <View style={styles.formGroup}>
+                <View style={styles.formLabelRow}>
+                  <Text style={styles.formLabel}>Official Email Address</Text>
+                  <Text style={styles.formRequiredStar}>*</Text>
+                </View>
+                <View style={styles.formInputContainer}>
+                  <Ionicons name="mail-outline" size={17} color="#64748B" />
+                  <TextInput
+                    style={styles.formTextInput}
+                    placeholder="e.g. arun@kaaraikarangal.org"
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    value={createAdminModal.email}
+                    onChangeText={(val) => setCreateAdminModal((p) => ({ ...p, email: val }))}
+                  />
+                </View>
+              </View>
+
+              {/* Form Input: Initial Password */}
+              <View style={styles.formGroup}>
+                <View style={styles.formLabelRow}>
+                  <Text style={styles.formLabel}>Initial Password</Text>
+                  <Text style={styles.formRequiredStar}>*</Text>
+                </View>
+                <View style={styles.formInputContainer}>
+                  <Ionicons name="lock-closed-outline" size={17} color="#64748B" />
+                  <TextInput
+                    style={styles.formTextInput}
+                    placeholder="Enter security password (min 6 chars)"
+                    placeholderTextColor="#94A3B8"
+                    secureTextEntry={!createAdminModal.showPassword}
+                    autoCapitalize="none"
+                    value={createAdminModal.password}
+                    onChangeText={(val) => setCreateAdminModal((p) => ({ ...p, password: val }))}
+                  />
+                  <Pressable
+                    onPress={() => setCreateAdminModal((p) => ({ ...p, showPassword: !p.showPassword }))}
+                    style={{ padding: 4 }}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={createAdminModal.showPassword ? "eye-off-outline" : "eye-outline"}
+                      size={18}
+                      color="#64748B"
+                    />
+                  </Pressable>
+                </View>
+                <Text style={styles.formHelperText}>
+                  Must be at least 6 characters. The sub-admin will use this to sign in.
+                </Text>
+              </View>
+            </ScrollView>
+
+            {/* Footer Actions Row */}
+            <View style={styles.createSubAdminFooter}>
+              <Pressable
+                style={styles.btnModalSecondary}
+                onPress={() => setCreateAdminModal((p) => ({ ...p, open: false }))}
+                disabled={createAdminModal.submitting}
+              >
+                <Text style={styles.btnModalSecondaryText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.btnModalPrimary,
+                  (!createAdminModal.name.trim() ||
+                    !createAdminModal.email.trim() ||
+                    createAdminModal.password.length < 6 ||
+                    createAdminModal.submitting) &&
+                    styles.btnModalPrimaryDisabled,
+                ]}
+                onPress={handleCreateSubAdmin}
+                disabled={
+                  !createAdminModal.name.trim() ||
+                  !createAdminModal.email.trim() ||
+                  createAdminModal.password.length < 6 ||
+                  createAdminModal.submitting
+                }
+              >
+                {createAdminModal.submitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="person-add" size={15} color="#FFFFFF" />
+                    <Text style={styles.btnModalPrimaryText}>Create Sub-Admin</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* STATIC FIXED BOTTOM NAVIGATION BAR */}
+      {/* ========================================================================= */}
+      {isMobile && (
+        <View
+          style={[
+            styles.bottomNavBar,
+            { paddingBottom: Math.max(insets.bottom, 8) },
+          ]}
+        >
+          {navTabs.map((tab) => {
+            const active = view === tab.id;
+            return (
+              <Pressable
+                key={tab.id}
+                testID={`admin-bottom-tab-${tab.id}`}
+                onPress={() => setView(tab.id)}
+                style={styles.bottomNavItem}
+                hitSlop={6}
+              >
+                <View style={[styles.bottomNavIconBox, active && styles.bottomNavIconBoxActive]}>
+                  <Ionicons
+                    name={(active ? tab.activeIcon : tab.icon) as any}
+                    size={20}
+                    color={active ? colors.brandPrimary : "#64748B"}
+                  />
+                  {tab.badge ? (
+                    <View style={styles.bottomNavBadge}>
+                      <Text style={styles.bottomNavBadgeText}>{tab.badge}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text
+                  style={[styles.bottomNavLabel, active && styles.bottomNavLabelActive]}
+                  numberOfLines={1}
+                >
+                  {tab.shortLabel}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -2311,28 +3226,61 @@ const styles = StyleSheet.create({
   subFilterRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
     marginTop: 6,
   },
+  filterChipSubRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+    flex: 1,
+  },
+  filterGroupLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.5,
+    marginRight: 2,
+  },
   availChip: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: radius.pill,
     backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
   availChipActive: {
     backgroundColor: "#0F172A",
+    borderColor: "#0F172A",
   },
   availChipText: {
     fontSize: 11,
-    fontWeight: "600",
+    fontWeight: "700",
     color: "#64748B",
   },
   availChipTextActive: {
     color: "#FFFFFF",
   },
+  filterCountBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  filterCountBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#334155",
+  },
   resultCountText: {
-    marginLeft: "auto",
     fontSize: 11,
     fontWeight: "600",
     color: "#64748B",
@@ -2523,63 +3471,114 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
-  /* Key Info Tiles (3 columns) */
+  /* Key Info Identity Tiles */
   donorInfoTilesRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 8,
+    marginTop: 10,
+  },
+  infoTileCard: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    justifyContent: "center",
+  },
+  infoTileHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#F8FAFC",
-    borderRadius: radius.md,
-    padding: 10,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: "#F1F5F9",
-    gap: 8,
-  },
-  infoTile: {
-    flex: 1,
+    marginBottom: 4,
   },
   infoTileLabel: {
     fontSize: 9,
     fontWeight: "800",
-    color: "#94A3B8",
+    color: "#64748B",
     letterSpacing: 0.5,
   },
-  infoTileValuePhone: {
-    fontSize: 12,
+  tapCallBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+  },
+  tapCallText: {
+    fontSize: 9,
     fontWeight: "800",
     color: colors.brandBlue,
   },
-  infoTileValueAadhaar: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#334155",
+  infoTileValuePhone: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: colors.brandBlue,
+    letterSpacing: 0.3,
   },
-  infoTileValue: {
+  infoTileValueAadhaar: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#1E293B",
+    letterSpacing: 0.5,
+  },
+  donorDemographicsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  demoChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  demoChipText: {
     fontSize: 11,
     fontWeight: "600",
     color: "#475569",
-    marginTop: 2,
+  },
+  demoDivider: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: "#CBD5E1",
   },
 
   /* Donor Actions Toolbar */
   donorActionBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 8,
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
+    gap: 8,
   },
-  actionBtnReveal: {
+  donorActionMainRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 8,
+    width: "100%",
+  },
+  actionBtnReveal: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
     backgroundColor: colors.brandBlue,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.pill,
   },
   actionBtnRevealText: {
@@ -2588,11 +3587,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   actionBtnAvailToggle: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 5,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: radius.pill,
     borderWidth: 1,
   },
@@ -2609,14 +3610,15 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   actionBtnStatusToggle: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    justifyContent: "center",
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radius.pill,
     borderWidth: 1,
-    marginLeft: "auto",
   },
   statusBtnSuspend: {
     backgroundColor: "#FEF2F2",
@@ -3038,46 +4040,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  /* Audit Trail */
-  auditRowCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    backgroundColor: "#FFFFFF",
-    borderRadius: radius.md,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  auditIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#EFF6FF",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
-  },
-  auditActionText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: colors.brandBlue,
-  },
-  auditTimeText: {
-    fontSize: 11,
-    color: "#94A3B8",
-  },
-  auditDetailText: {
-    fontSize: 11,
-    color: "#334155",
-    marginTop: 2,
-  },
-  auditMetaText: {
-    fontSize: 10,
-    color: "#64748B",
-    fontFamily: "monospace",
-    marginTop: 2,
-  },
   historyHead: {
     marginBottom: spacing.md,
   },
@@ -3809,5 +4771,700 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#92400E",
     fontWeight: "600",
+  },
+
+  /* Access Denied */
+  accessDeniedContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 48,
+  },
+  accessDeniedCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+    maxWidth: 440,
+    width: "100%",
+    borderWidth: 1,
+    borderColor: "#FEE2E2",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  accessDeniedIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#FEF2F2",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
+  },
+  accessDeniedTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  accessDeniedDesc: {
+    fontSize: 13,
+    color: "#64748B",
+    textAlign: "center",
+    lineHeight: 18,
+    marginBottom: spacing.lg,
+  },
+  accessDeniedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.brandPrimary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+  },
+  accessDeniedBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  /* Audit Header & Filter Box */
+  superAdminHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+    gap: 12,
+  },
+  superAdminPill: {
+    backgroundColor: "#EDE9FE",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  superAdminPillText: {
+    fontSize: 9,
+    fontWeight: "900",
+    color: "#7C3AED",
+    letterSpacing: 0.5,
+  },
+  refreshAuditBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+  },
+  refreshAuditText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.brandBlue,
+  },
+  auditFilterBox: {
+    marginTop: 8,
+  },
+  auditFilterScroll: {
+    gap: 8,
+    paddingVertical: 8,
+  },
+  auditFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  auditFilterChipActive: {
+    backgroundColor: colors.brandBlue,
+    borderColor: colors.brandBlue,
+  },
+  auditFilterChipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+  auditFilterChipTextActive: {
+    color: "#FFFFFF",
+  },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    gap: 8,
+  },
+
+  /* Audit Cards */
+  auditRowCard: {
+    flexDirection: "row",
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.md,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  auditIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  auditRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  auditBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  auditBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  auditTimeText: {
+    fontSize: 11,
+    color: "#94A3B8",
+    fontWeight: "600",
+  },
+  auditActorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  auditActorText: {
+    fontSize: 12,
+    color: "#475569",
+  },
+  auditTargetText: {
+    fontSize: 11,
+    color: "#64748B",
+  },
+  auditMetaBox: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  auditMetaChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  auditMetaKey: {
+    fontSize: 10,
+    color: "#64748B",
+    fontWeight: "700",
+  },
+  auditMetaVal: {
+    fontSize: 10,
+    color: "#0F172A",
+    fontWeight: "600",
+  },
+
+  /* Sub-Admins Head & Notice */
+  subAdminsHead: {
+    marginBottom: spacing.md,
+  },
+  superAdminNoticeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#F5F3FF",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+    borderRadius: radius.md,
+    padding: 14,
+    marginBottom: 16,
+  },
+  superAdminNoticeIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#EDE9FE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  superAdminNoticeTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#5B21B6",
+    marginBottom: 2,
+  },
+  superAdminNoticeDesc: {
+    fontSize: 12,
+    color: "#6D28D9",
+    lineHeight: 16,
+  },
+  subAdminsActionBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  btnCreateAdminPrimary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#7C3AED",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.pill,
+    shadowColor: "#7C3AED",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  btnCreateAdminPrimaryText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  /* Admin User Card */
+  adminUserCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.md,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  adminUserCardSuper: {
+    borderColor: "#DDD6FE",
+    backgroundColor: "#FDFBFF",
+  },
+  adminCardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  adminAvatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  adminAvatarCircleSuper: {
+    backgroundColor: "#EDE9FE",
+    borderColor: "#C4B5FD",
+  },
+  adminCardName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  superBadgePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "#7C3AED",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  superBadgePillText: {
+    fontSize: 8,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
+  },
+  subBadgePill: {
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  subBadgePillText: {
+    fontSize: 8,
+    fontWeight: "800",
+    color: colors.brandBlue,
+    letterSpacing: 0.5,
+  },
+  statusActivePill: {
+    backgroundColor: "#ECFDF5",
+  },
+  statusSuspendedPill: {
+    backgroundColor: "#FEF3C7",
+  },
+  statusActivePillText: {
+    color: "#059669",
+  },
+  statusSuspendedPillText: {
+    color: "#D97706",
+  },
+  adminCardEmail: {
+    fontSize: 12,
+    color: "#475569",
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  adminCardDate: {
+    fontSize: 10,
+    color: "#94A3B8",
+    marginTop: 2,
+  },
+  adminCardPermissionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  adminCardPermissionsText: {
+    flex: 1,
+    fontSize: 11,
+    color: "#64748B",
+    lineHeight: 15,
+  },
+  adminCardActionsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+  },
+  btnAdminAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  btnAdminSuspend: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FDE68A",
+  },
+  btnAdminActivate: {
+    backgroundColor: "#ECFDF5",
+    borderColor: "#A7F3D0",
+  },
+  btnAdminDelete: {
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FECACA",
+  },
+  btnAdminActionText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  immutableRootNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F5F3FF",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginTop: 10,
+    alignSelf: "flex-start",
+  },
+  immutableRootText: {
+    fontSize: 11,
+    color: "#7C3AED",
+    fontWeight: "600",
+  },
+
+  /* Modern Create Sub-Admin Modal */
+  createSubAdminCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "90%",
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.18,
+    shadowRadius: 36,
+    elevation: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  createSubAdminHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+    backgroundColor: "#FFFFFF",
+  },
+  createSubAdminHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+    marginRight: 10,
+  },
+  createSubAdminHeaderIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#F5F3FF",
+    borderWidth: 1,
+    borderColor: "#EDE9FE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createSubAdminTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: -0.3,
+  },
+  createSubAdminSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  modalCloseCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createSubAdminBody: {
+    paddingHorizontal: 22,
+    paddingTop: 18,
+  },
+  roleNoticeCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    backgroundColor: "#FAF5FF",
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 18,
+  },
+  roleNoticeTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#6D28D9",
+    marginBottom: 2,
+  },
+  roleNoticeDesc: {
+    fontSize: 11,
+    color: "#5B21B6",
+    lineHeight: 16,
+  },
+  formGroup: {
+    marginBottom: 16,
+    width: "100%",
+  },
+  formLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 6,
+  },
+  formLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  formRequiredStar: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#EF4444",
+  },
+  formInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 46,
+    gap: 8,
+  },
+  formTextInput: {
+    flex: 1,
+    fontSize: 14,
+    color: "#0F172A",
+    fontWeight: "500",
+    textAlign: "left",
+    letterSpacing: 0,
+    paddingVertical: 8,
+  },
+  formHelperText: {
+    fontSize: 11,
+    color: "#94A3B8",
+    marginTop: 4,
+    marginLeft: 2,
+  },
+  createSubAdminFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 12,
+    paddingHorizontal: 22,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+    backgroundColor: "#F8FAFC",
+  },
+  btnModalSecondary: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnModalSecondaryText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  btnModalPrimary: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: "#7C3AED",
+    shadowColor: "#7C3AED",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  btnModalPrimaryDisabled: {
+    opacity: 0.5,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  btnModalPrimaryText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+
+  /* Static Fixed Bottom Navigation Bar */
+  bottomNavBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+    paddingTop: 8,
+    paddingHorizontal: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 8,
+    zIndex: 100,
+  },
+  bottomNavItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 2,
+  },
+  bottomNavIconBox: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 36,
+    height: 28,
+    borderRadius: radius.pill,
+  },
+  bottomNavIconBoxActive: {
+    backgroundColor: "#FEF2F2",
+  },
+  bottomNavBadge: {
+    position: "absolute",
+    top: -2,
+    right: -4,
+    backgroundColor: "#DC2626",
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
+  },
+  bottomNavBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "900",
+  },
+  bottomNavLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#64748B",
+    marginTop: 2,
+    textAlign: "center",
+  },
+  bottomNavLabelActive: {
+    color: colors.brandPrimary,
+    fontWeight: "800",
   },
 });

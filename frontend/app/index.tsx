@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
-import { getRole, getToken } from "@/src/api";
+import { getActiveSession } from "@/src/api";
 import { BrandLogo } from "@/src/components/BrandLogo";
 
 const LOGO_FULL = require("@/assets/images/kk_life_drop_logo.png");
@@ -27,6 +27,8 @@ const USE_NATIVE_DRIVER = Platform.OS !== "web";
 
 export default function Landing() {
   const insets = useSafeAreaInsets();
+  const [sessionChecking, setSessionChecking] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
 
   // Splash Animation Values
@@ -43,16 +45,38 @@ export default function Landing() {
   const pulseScale = useRef(new Animated.Value(1)).current;
   const emergencyPulse = useRef(new Animated.Value(1)).current;
 
+  // 1. Check existing session first - if logged in, navigate immediately without ever showing guest landing page
   useEffect(() => {
-    // 1. Check existing session for auto-routing
+    let isMounted = true;
     (async () => {
-      const t = await getToken();
-      const role = await getRole();
-      if (t && role === "admin") router.replace("/admin");
-      else if (t && role === "user") router.replace("/(tabs)/home");
+      try {
+        const session = await getActiveSession();
+        if (!isMounted) return;
+        if (session.isLoggedIn) {
+          if (session.role === "admin") {
+            router.replace("/admin");
+          } else {
+            router.replace("/(tabs)/home");
+          }
+          return;
+        }
+      } catch {}
+
+      if (!isMounted) return;
+      setIsGuest(true);
+      setSessionChecking(false);
     })();
 
-    // 2. Opening App Logo Splash Animation Sequence
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // 2. Only run animations if the user is confirmed to be a guest
+  useEffect(() => {
+    if (!isGuest) return;
+
+    // Opening App Logo Splash Animation Sequence
     Animated.sequence([
       // First: Logo scale & fade in
       Animated.parallel([
@@ -115,7 +139,7 @@ export default function Landing() {
       setShowSplash(false);
     });
 
-    // 3. Main Page Entrance Animation
+    // Main Page Entrance Animation
     Animated.parallel([
       Animated.timing(heroFade, {
         toValue: 1,
@@ -132,7 +156,7 @@ export default function Landing() {
       }),
     ]).start();
 
-    // 4. Continuous gentle heartbeat on the emblem
+    // Continuous gentle heartbeat on the emblem
     const heartBeatLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseScale, {
@@ -151,7 +175,7 @@ export default function Landing() {
     );
     heartBeatLoop.start();
 
-    // 5. Emergency icon subtle pulse
+    // Emergency icon subtle pulse
     const emergencyLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(emergencyPulse, {
@@ -172,7 +196,43 @@ export default function Landing() {
       heartBeatLoop.stop();
       emergencyLoop.stop();
     };
-  }, []);
+  }, [isGuest]);
+
+  // If checking session or not verified as a guest, render only the branded splash screen
+  if (sessionChecking || !isGuest) {
+    return (
+      <View style={styles.splashOverlay}>
+        <LinearGradient
+          colors={["#0B132B", "#1C2541", "#0B132B"]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.splashContent}>
+          <View style={styles.splashLogoContainer}>
+            <Image
+              source={LOGO_SYMBOL}
+              style={styles.splashLogoImg}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.splashTextWrap}>
+            <View style={styles.titleRow}>
+              <Text style={styles.splashTitleKK}>KK </Text>
+              <Text style={styles.splashTitleLife}>Life </Text>
+              <Text style={styles.splashTitleDrop}>Drop</Text>
+            </View>
+            <Text style={styles.splashTagline}>DONATE BLOOD, SAVE LIVES</Text>
+            <View style={styles.splashTamilBadge}>
+              <Text style={styles.splashTamilText}>யாதும் ஊரே..! யாவரும் கேளிர்..!</Text>
+            </View>
+            <Text style={styles.splashOrgText}>
+              Kaarai Karangal Samooga Sevai Amaippu
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
 
   return (
     <View style={styles.root}>

@@ -51,7 +51,7 @@ export default function RequestBlood() {
         <View style={styles.reqIdPill}>
           <Text style={{ color: colors.brandPrimary, fontWeight: "800" }}>{done}</Text>
         </View>
-        <Button testID="done-home-btn" label="Back to Home" onPress={() => router.replace("/")} style={{ marginTop: spacing.lg, alignSelf: "stretch" }} />
+        <Button testID="done-home-btn" label="Back to Home" onPress={() => router.replace("/(tabs)/home")} style={{ marginTop: spacing.lg, alignSelf: "stretch" }} />
       </View>
     );
   }

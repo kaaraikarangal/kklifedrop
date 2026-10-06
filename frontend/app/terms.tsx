@@ -4,16 +4,30 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
+import { getActiveSession } from "@/src/api";
 
 export default function TermsAndConditions() {
   const insets = useSafeAreaInsets();
+
+  const handleBack = async () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    const session = await getActiveSession();
+    if (session.isLoggedIn) {
+      router.replace("/(tabs)/home");
+    } else {
+      router.replace("/");
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       {/* Sticky Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Pressable
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+          onPress={handleBack}
           style={styles.backBtn}
           testID="terms-back-btn"
         >
@@ -34,12 +48,12 @@ export default function TermsAndConditions() {
         <View style={styles.card}>
           <Text style={styles.lastUpdated}>Effective Date: October 2026</Text>
           <Text style={styles.intro}>
-            Welcome to <Text style={{ fontWeight: "700", color: colors.brandPrimary }}>K2 Life Drop</Text>, a non-profit volunteer platform initiative organized by <Text style={{ fontWeight: "700" }}>Kaarai Karangal Social Service Organization</Text>. By installing, registering, or using this application, you agree to comply with and be bound by the following Terms and Conditions.
+            Welcome to <Text style={{ fontWeight: "700", color: colors.brandPrimary }}>KK Life Drop</Text>, a non-profit volunteer platform initiative organized by <Text style={{ fontWeight: "700" }}>Kaarai Karangal Social Service Organization</Text>. By installing, registering, or using this application, you agree to comply with and be bound by the following Terms and Conditions.
           </Text>
 
           <SectionTitle number="1" title="Purpose & Voluntary Nature" />
           <Text style={styles.p}>
-            K2 Life Drop is a voluntary, non-commercial digital directory and emergency coordination bridge connecting patients/hospitals with voluntary blood donors in Karaikal, Puducherry, and Tamil Nadu.
+            KK Life Drop is a voluntary, non-commercial digital directory and emergency coordination bridge connecting patients/hospitals with voluntary blood donors in Karaikal, Puducherry, and Tamil Nadu.
           </Text>
           <Text style={styles.p}>
             All blood donations facilitated through this platform are strictly voluntary and altruistic. <Text style={styles.bold}>No monetary compensation, gift, commercial transaction, or exchange of goods is ever permitted or requested</Text> under Section 19 of the National Blood Transfusion Council (NBTC) guidelines and the Drugs and Cosmetics Act.
@@ -47,7 +61,7 @@ export default function TermsAndConditions() {
 
           <SectionTitle number="2" title="Donor Eligibility & Medical Prerequisite" />
           <Text style={styles.p}>
-            To register as a blood donor on K2 Life Drop, you represent and warrant that:
+            To register as a blood donor on KK Life Drop, you represent and warrant that:
           </Text>
           <Bullet text="You are between 18 and 65 years of age." />
           <Bullet text="You weigh at least 45–50 kg and are in sound physical health." />
@@ -62,7 +76,7 @@ export default function TermsAndConditions() {
             Requesters must provide genuine patient and hospital details. Submitting false, fraudulent, or commercial blood requests is strictly prohibited and subject to immediate account termination and legal action under Indian law.
           </Text>
           <Text style={styles.p}>
-            While K2 Life Drop notifies volunteer donors promptly, <Text style={styles.bold}>we cannot guarantee donor arrival or blood unit availability</Text> for every individual emergency request.
+            While KK Life Drop notifies volunteer donors promptly, <Text style={styles.bold}>we cannot guarantee donor arrival or blood unit availability</Text> for every individual emergency request.
           </Text>
 
           <SectionTitle number="4" title="Identity & Aadhaar Verification" />
@@ -72,7 +86,7 @@ export default function TermsAndConditions() {
 
           <SectionTitle number="5" title="Medical Disclaimer & Limitation of Liability" />
           <Text style={styles.p}>
-            K2 Life Drop is an emergency communication network, NOT a hospital, blood bank, or healthcare provider. We do not collect, process, test, or store physical blood.
+            KK Life Drop is an emergency communication network, NOT a hospital, blood bank, or healthcare provider. We do not collect, process, test, or store physical blood.
           </Text>
           <Text style={styles.p}>
             To the maximum extent permitted by law, Kaarai Karangal Social Service Organization, its trustees, volunteers, and developers disclaim all liability for any medical complications, delays, adverse transfusion events, or actions taken between users and medical facilities.
@@ -89,9 +103,9 @@ export default function TermsAndConditions() {
           </Text>
           <View style={styles.contactBox}>
             <Text style={styles.contactTitle}>Kaarai Karangal Social Service Organization</Text>
-            <Text style={styles.contactText}>Address: Karaikal, Puducherry UT - 609602, India</Text>
-            <Text style={styles.contactText}>Email: support@k2lifedrop.org / admin@k2lifedrop.com</Text>
-            <Text style={styles.contactText}>Helpline: +91 94888 88888</Text>
+            <Text style={styles.contactText}>Address: K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India</Text>
+            <Text style={styles.contactText}>Email: kaaraikarangal@gmail.com</Text>
+            <Text style={styles.contactText}>Helpline: +91 9750807463</Text>
           </View>
         </View>
       </ScrollView>

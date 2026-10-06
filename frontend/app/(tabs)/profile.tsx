@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Alert, Platform, Linking } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -7,6 +7,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { api, clearSession } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { toast } from "@/src/Toast";
+import { sendTestLocalNotification } from "@/src/notifications";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -113,6 +114,27 @@ export default function Profile() {
         <Switch testID="optin-switch" value={!!me.donation_opt_in} onValueChange={toggleOptIn} trackColor={{ true: colors.brandPrimary }} />
       </View>
 
+      {Platform.OS !== "web" ? (
+        <Pressable
+          testID="test-push-btn"
+          style={styles.testPushRow}
+          onPress={async () => {
+            const ok = await sendTestLocalNotification();
+            if (ok) {
+              toast("success", "Push Alert Sent", "High-priority sound and banner triggered on your phone.");
+            } else {
+              toast("info", "Push Diagnostics", "Please ensure notifications are enabled in device settings.");
+            }
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Ionicons name="notifications-circle-outline" size={20} color={colors.brandPrimary} />
+            <Text style={{ fontSize: 13, fontWeight: "700", color: colors.brandPrimary }}>Test Notification on This Phone</Text>
+          </View>
+          <Ionicons name="volume-high-outline" size={16} color={colors.brandPrimary} />
+        </Pressable>
+      ) : null}
+
       <Text style={styles.section}>Legal & Policies</Text>
       <Pressable
         testID="terms-row"
@@ -137,6 +159,33 @@ export default function Profile() {
         </View>
         <Ionicons name="chevron-forward" size={18} color={colors.muted} />
       </Pressable>
+
+      <Text style={styles.section}>Official Contact & Helpline</Text>
+      <View style={styles.orgContactCard}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <Ionicons name="business" size={18} color={colors.brandPrimary} />
+          <Text style={{ fontSize: 14, fontWeight: "800", color: colors.onSurface }}>Kaarai Karangal</Text>
+        </View>
+        <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 10, lineHeight: 18 }}>
+          K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India.
+        </Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable
+            style={styles.contactActionBtn}
+            onPress={() => Linking.openURL("tel:+919750807463")}
+          >
+            <Ionicons name="call" size={13} color="#FFFFFF" />
+            <Text style={styles.contactActionBtnText}>+91 9750807463</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.contactActionBtn, { backgroundColor: "#F1F5F9", borderWidth: 1, borderColor: "#E2E8F0" }]}
+            onPress={() => Linking.openURL("mailto:kaaraikarangal@gmail.com")}
+          >
+            <Ionicons name="mail" size={13} color="#0F172A" />
+            <Text style={[styles.contactActionBtnText, { color: "#0F172A" }]}>Email</Text>
+          </Pressable>
+        </View>
+      </View>
 
       <Pressable testID="logout-btn" onPress={logout} style={styles.logout}>
         <Ionicons name="log-out-outline" size={18} color={colors.onSurface} />
@@ -164,6 +213,10 @@ const styles = StyleSheet.create({
   navRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10 },
   navRowLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
   navRowTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  orgContactCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10, borderWidth: 1, borderColor: colors.border },
+  contactActionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.brandPrimary, paddingVertical: 8, paddingHorizontal: 12, borderRadius: radius.pill },
+  contactActionBtnText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
   logout: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md },
   deleteBtn: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, borderWidth: 1, borderColor: "#FCA5A5", borderRadius: radius.md, backgroundColor: "#FEF2F2" },
+  testPushRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FECACA", borderRadius: radius.md, padding: 12, marginBottom: 10 },
 });

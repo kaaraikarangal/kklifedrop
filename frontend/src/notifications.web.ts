@@ -5,6 +5,7 @@
 
 export const PUSH_TOKEN_KEY = "k2_push_token";
 export const EMERGENCY_CHANNEL_ID = "emergency-blood-alerts";
+export const GENERAL_CHANNEL_ID = "general-blood-alerts";
 
 export async function setupNotificationChannelsAsync(): Promise<void> {}
 
@@ -13,6 +14,10 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 }
 
 export async function syncPushTokenWithBackend(): Promise<void> {}
+
+export async function sendTestLocalNotification(): Promise<boolean> {
+  return false;
+}
 
 export function setupNotificationListeners(): () => void {
   return () => {};

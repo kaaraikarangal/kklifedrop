@@ -4,16 +4,30 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
+import { getActiveSession } from "@/src/api";
 
 export default function PrivacyPolicy() {
   const insets = useSafeAreaInsets();
+
+  const handleBack = async () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    const session = await getActiveSession();
+    if (session.isLoggedIn) {
+      router.replace("/(tabs)/home");
+    } else {
+      router.replace("/");
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       {/* Sticky Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Pressable
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+          onPress={handleBack}
           style={styles.backBtn}
           testID="privacy-back-btn"
         >
@@ -34,7 +48,7 @@ export default function PrivacyPolicy() {
         <View style={styles.card}>
           <Text style={styles.lastUpdated}>Last Updated: October 2026</Text>
           <Text style={styles.intro}>
-            <Text style={{ fontWeight: "700", color: colors.brandPrimary }}>Kaarai Karangal Social Service Organization</Text> ("we", "our", or "us") operates the <Text style={{ fontWeight: "700" }}>K2 Life Drop</Text> mobile application. This Privacy Policy informs you of our policies regarding the collection, use, protection, and disclosure of personal data when you use our service, in full compliance with the Digital Personal Data Protection Act (DPDPA), Google Play Developer Policies, and Apple App Store Review Guidelines.
+            <Text style={{ fontWeight: "700", color: colors.brandPrimary }}>Kaarai Karangal Social Service Organization</Text> ("we", "our", or "us") operates the <Text style={{ fontWeight: "700" }}>KK Life Drop</Text> mobile application. This Privacy Policy informs you of our policies regarding the collection, use, protection, and disclosure of personal data when you use our service, in full compliance with the Digital Personal Data Protection Act (DPDPA), Google Play Developer Policies, and Apple App Store Review Guidelines.
           </Text>
 
           <SectionTitle number="1" title="Data We Collect" />
@@ -91,9 +105,9 @@ export default function PrivacyPolicy() {
           <View style={styles.contactBox}>
             <Text style={styles.contactTitle}>Kaarai Karangal Grievance Cell</Text>
             <Text style={styles.contactText}>Organization: Kaarai Karangal Social Service Organization</Text>
-            <Text style={styles.contactText}>Location: Karaikal, UT of Puducherry - 609602, India</Text>
-            <Text style={styles.contactText}>Privacy Email: privacy@k2lifedrop.org / admin@k2lifedrop.com</Text>
-            <Text style={styles.contactText}>Phone: +91 94888 88888</Text>
+            <Text style={styles.contactText}>Address: K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India</Text>
+            <Text style={styles.contactText}>Email: kaaraikarangal@gmail.com</Text>
+            <Text style={styles.contactText}>Phone / Helpline: +91 9750807463</Text>
           </View>
         </View>
       </ScrollView>

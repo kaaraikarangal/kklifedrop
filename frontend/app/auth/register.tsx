@@ -37,7 +37,7 @@ export default function Register() {
       const payload = { ...f, last_donation_date: f.last_donation_date || null };
       await api("/donors", { auth: true, body: payload });
       syncPushTokenWithBackend().catch(() => {});
-      toast("success", "Registered", "Welcome to K2 Life Drop!");
+      toast("success", "Registered", "Welcome to KK Life Drop!");
       router.replace("/(tabs)/home");
     } catch (e: any) {
       toast("error", "Failed", e.message);
@@ -111,7 +111,7 @@ export default function Register() {
 
         <View style={styles.toggleRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.toggleTitle}>Allow K2 Life Drop to contact me for blood requests</Text>
+            <Text style={styles.toggleTitle}>Allow KK Life Drop to contact me for blood requests</Text>
             <Text style={styles.toggleSub}>Only opted-in donors receive notifications.</Text>
           </View>
           <Switch testID="opt-in-switch" value={f.donation_opt_in} onValueChange={(v) => set("donation_opt_in", v)} trackColor={{ true: colors.brandPrimary }} />

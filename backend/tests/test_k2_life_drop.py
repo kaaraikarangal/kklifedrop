@@ -1,4 +1,4 @@
-"""K2 Life Drop backend tests — Supabase/Postgres edition.
+"""KK Life Drop backend tests — Supabase/Postgres edition.
 
 Fully self-contained: creates its own donors/requests (no reliance on
 seeded demo data, which was removed during the Mongo -> Supabase migration).

@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,6 +18,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import {
   api,
   setSession,
+  clearSession,
   getBaseUrl,
   setCustomBackendUrl,
   resetBackendUrl,
@@ -29,8 +31,9 @@ import { BrandLogo } from "@/src/components/BrandLogo";
 
 export default function AdminLogin() {
   const insets = useSafeAreaInsets();
-  const [email, setEmail] = useState("admin@k2lifedrop.com");
-  const [password, setPassword] = useState("Admin@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // Server URL Configuration
@@ -84,15 +87,22 @@ export default function AdminLogin() {
   }
 
   async function login() {
-    if (!email || !password) return toast("error", "Missing", "Enter email and password");
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail || !cleanPassword) {
+      return toast("error", "Credentials Required", "Enter registered admin email and password");
+    }
+
     setLoading(true);
     try {
-      const r: any = await api("/auth/admin/login", { body: { email, password } });
+      await clearSession();
+      const r: any = await api("/auth/admin/login", { body: { email: cleanEmail, password: cleanPassword } });
       await setSession(r.token, "admin");
-      toast("success", "Welcome", "Admin signed in successfully");
+      toast("success", "Access Granted", `Authenticated as ${r.is_super_admin ? "Super Admin" : "Administrator"}`);
       router.replace("/admin");
     } catch (e: any) {
-      toast("error", "Login failed", e.message);
+      toast("error", "Access Denied", e.message || "Invalid administrator credentials");
     } finally {
       setLoading(false);
     }
@@ -233,30 +243,51 @@ export default function AdminLogin() {
               <Input
                 testID="admin-email-input"
                 label="Admin Email Address"
+                placeholder="Enter registered admin email"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
-              <Input
-                testID="admin-password-input"
-                label="Security Password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
+
+              <View style={styles.passwordFieldWrap}>
+                <Text style={styles.passwordFieldLabel}>Security Password</Text>
+                <View style={styles.passwordInputContainer}>
+                  <TextInput
+                    testID="admin-password-input"
+                    style={styles.passwordTextInput}
+                    placeholder="Enter admin password"
+                    placeholderTextColor="#94A3B8"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                  />
+                  <Pressable
+                    onPress={() => setShowPassword((prev) => !prev)}
+                    style={styles.passwordEyeBtn}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={showPassword ? "eye-off-outline" : "eye-outline"}
+                      size={20}
+                      color="#64748B"
+                    />
+                  </Pressable>
+                </View>
+              </View>
 
               <Button
                 testID="admin-login-btn"
-                label="Authenticate & Enter"
+                label="Authenticate & Enter Portal"
                 onPress={login}
                 loading={loading}
               />
 
-              <View style={styles.securityNote}>
-                <Ionicons name="lock-closed" size={14} color="#64748B" />
-                <Text style={styles.securityText}>
-                  Audit-logged session with 256-bit encryption
+              <View style={styles.restrictedBanner}>
+                <Ionicons name="shield-checkmark" size={15} color="#0284C7" />
+                <Text style={styles.restrictedBannerText}>
+                  Restricted Access • Registered administrators only. All login events are audited.
                 </Text>
               </View>
 
@@ -467,6 +498,52 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#64748B",
     fontWeight: "500",
+  },
+  passwordFieldWrap: {
+    marginBottom: spacing.md,
+  },
+  passwordFieldLabel: {
+    color: colors.onSurfaceSecondary,
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
+  passwordInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceTertiary,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  passwordTextInput: {
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: colors.onSurface,
+  },
+  passwordEyeBtn: {
+    padding: 6,
+  },
+  restrictedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    marginTop: spacing.md,
+  },
+  restrictedBannerText: {
+    flex: 1,
+    fontSize: 11,
+    color: "#0369A1",
+    lineHeight: 15,
+    fontWeight: "600",
   },
   activeServerRow: {
     flexDirection: "row",

@@ -1,4 +1,4 @@
-// Design tokens for K2 Life Drop - Blood donation platform
+// Design tokens for KK Life Drop - Blood donation platform
 // Blood-red primary with clean white surface, iOS-native clean personality.
 
 import { useMemo } from "react";

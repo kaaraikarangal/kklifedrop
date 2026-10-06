@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl } from "react-native";
-import { router } from "expo-router";
+import React, { useEffect, useState, useCallback } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, BackHandler, Platform } from "react-native";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -8,6 +8,10 @@ import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
+import {
+  subscribePendingCount,
+  refreshPendingNotifications,
+} from "@/src/pending-notifications";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
@@ -32,8 +36,24 @@ export default function Home() {
     emergency_requests: 0,
   });
   const [requests, setRequests] = useState<any[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Prevent hardware back press from navigating back to the guest Landing page
+  useFocusEffect(
+    useCallback(() => {
+      refreshPendingNotifications();
+      if (Platform.OS === "android") {
+        const onBackPress = () => {
+          BackHandler.exitApp();
+          return true;
+        };
+        const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+        return () => subscription.remove();
+      }
+    }, [])
+  );
 
   const load = async () => {
     try {
@@ -80,12 +100,14 @@ export default function Home() {
   };
 
   useEffect(() => {
+    const unsub = subscribePendingCount((cnt) => setPendingCount(cnt));
     load();
+    return () => unsub();
   }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await Promise.allSettled([load(), refreshPendingNotifications()]);
     setRefreshing(false);
   };
 
@@ -96,8 +118,20 @@ export default function Home() {
       {/* Sticky Top Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <BrandLogo variant="horizontal" size="sm" />
-        <Pressable style={styles.iconBtn} onPress={() => router.push("/(tabs)/notifications")} testID="header-notifications">
+        <Pressable
+          style={styles.iconBtn}
+          onPress={() => router.push("/(tabs)/notifications")}
+          testID="header-notifications"
+          accessibilityLabel={`Notifications, ${pendingCount} pending`}
+        >
           <Ionicons name="notifications" size={20} color={colors.onSurface} />
+          {pendingCount > 0 ? (
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>
+                {pendingCount > 9 ? "9+" : pendingCount}
+              </Text>
+            </View>
+          ) : null}
         </Pressable>
       </View>
 
@@ -106,6 +140,45 @@ export default function Home() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brandPrimary} />}
         showsVerticalScrollIndicator={false}
       >
+
+        {/* PENDING NOTIFICATION ACTION BANNER (When user missed or closed push notification) */}
+        {pendingCount > 0 ? (
+          <Pressable
+            style={styles.pendingAlertCard}
+            onPress={() => router.push("/(tabs)/notifications")}
+            testID="pending-notifications-banner"
+          >
+            <LinearGradient
+              colors={["#FFF1F2", "#FFE4E6"]}
+              style={StyleSheet.absoluteFill}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            />
+            <View style={styles.pendingLeftIcon}>
+              <Ionicons name="notifications" size={22} color="#E11D48" />
+            </View>
+            <View style={{ flex: 1, paddingRight: 6 }}>
+              <View style={styles.pendingBadgeRow}>
+                <View style={styles.pendingBeacon}>
+                  <View style={styles.pendingDot} />
+                  <Text style={styles.pendingBadgeText}>ACTION REQUIRED</Text>
+                </View>
+                <Text style={styles.pendingCountPill}>{pendingCount} PENDING</Text>
+              </View>
+              <Text style={styles.pendingTitle}>
+                {pendingCount === 1
+                  ? "1 Blood Request Needs Your Response"
+                  : `${pendingCount} Blood Requests Need Your Response`}
+              </Text>
+              <Text style={styles.pendingDesc}>
+                Karaikal hospitals alerted you. Even if you closed the notification, tap to respond now.
+              </Text>
+            </View>
+            <View style={styles.pendingArrowBtn}>
+              <Ionicons name="arrow-forward-circle" size={26} color="#E11D48" />
+            </View>
+          </Pressable>
+        ) : null}
 
         {/* Emergency Alert (if active) */}
         {emergency ? (
@@ -122,6 +195,7 @@ export default function Home() {
             <Ionicons name="chevron-forward" size={20} color="#FFFFFF" />
           </Pressable>
         ) : null}
+
 
         {/* ========================================================================= */}
         {/* USER COUNT HERO DASHBOARD */}
@@ -270,6 +344,101 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "#E2E8F0",
+    position: "relative",
+  },
+  headerBadge: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    backgroundColor: "#DC2626",
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
+  },
+  headerBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  pendingAlertCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    backgroundColor: "#FFF1F2",
+    borderWidth: 1.5,
+    borderColor: "#FDA4AF",
+    flexDirection: "row",
+    alignItems: "center",
+    shadowColor: "#E11D48",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 3,
+    overflow: "hidden",
+  },
+  pendingLeftIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#FFE4E6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  pendingBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  pendingBeacon: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#E11D48",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 5,
+  },
+  pendingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#FFFFFF",
+  },
+  pendingBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
+  pendingCountPill: {
+    color: "#BE123C",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  pendingTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#881337",
+    marginBottom: 2,
+  },
+  pendingDesc: {
+    fontSize: 11,
+    color: "#9F1239",
+    lineHeight: 15,
+  },
+  pendingArrowBtn: {
+    marginLeft: 4,
+    alignItems: "center",
+    justifyContent: "center",
   },
   alert: {
     flexDirection: "row",

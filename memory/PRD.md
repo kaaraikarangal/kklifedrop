@@ -1,4 +1,4 @@
-# K2 Life Drop — Product Requirements
+# KK Life Drop — Product Requirements
 
 **Tagline:** Every Drop Can Save a Life
 

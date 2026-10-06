@@ -1,4 +1,4 @@
--- K2 Life Drop — Supabase schema
+-- KK Life Drop — Supabase schema
 -- Run in Supabase SQL Editor (or via pg-meta). Backend talks via service_role key.
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

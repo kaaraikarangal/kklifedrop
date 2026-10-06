@@ -1,5 +1,5 @@
 """
-K2 Life Drop - Blood Donation Platform Backend
+KK Life Drop - Blood Donation Platform Backend
 FastAPI + Supabase (Postgres) via service_role key.
 Clean provider interfaces for SMS / Email / Push so real providers
 (MSG91, Twilio, Resend, FCM) can be dropped in via .env.
@@ -607,8 +607,8 @@ async def on_start():
         )
 
     # Seed default admin
-    admin_email = os.environ.get("ADMIN_SEED_EMAIL", "admin@k2lifedrop.com").lower()
-    admin_pw = os.environ.get("ADMIN_SEED_PASSWORD", "Admin@123")
+    admin_email = os.environ.get("ADMIN_SEED_EMAIL", "kaaraikarangal@gmail.com").lower()
+    admin_pw = os.environ.get("ADMIN_SEED_PASSWORD", "Kaaraikarangal@12345")
     try:
         r = await sb.table("admin_users").select("id").eq("email", admin_email).execute()
         if not r.data:
@@ -1084,7 +1084,7 @@ async def notify_donors(req_id: str, body: NotifyIn, admin: dict = Depends(curre
             donors = eligible
 
     msg = (
-        f"K2 Life Drop: Emergency Blood Requirement. Group {req['blood_group']}, "
+        f"KK Life Drop: Emergency Blood Requirement. Group {req['blood_group']}, "
         f"Hospital {req['hospital_name']}, Location {req.get('hospital_area') or req.get('hospital_city')}, "
         f"Units {req['units_required']}, Urgency {req['urgency']}. Please respond in the app if available."
     )
@@ -1432,7 +1432,7 @@ HTML_TERMS = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Terms & Conditions - K2 Life Drop</title>
+  <title>Terms & Conditions - KK Life Drop</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #F8FAFC; color: #1E293B; margin: 0; padding: 24px; line-height: 1.6; }
     .container { max-width: 800px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #E2E8F0; }
@@ -1448,23 +1448,24 @@ HTML_TERMS = """<!DOCTYPE html>
     <div class="badge">Kaarai Karangal Social Service Organization</div>
     <h1>Terms & Conditions</h1>
     <p><strong>Effective Date:</strong> October 2026</p>
-    <p>Welcome to <strong>K2 Life Drop</strong>. By installing, registering, or using our mobile application or web portal, you agree to these Terms and Conditions.</p>
+    <p>Welcome to <strong>KK Life Drop</strong>. By installing, registering, or using our mobile application or web portal, you agree to these Terms and Conditions.</p>
 
     <h2>1. Voluntary & Non-Commercial Nature</h2>
-    <p>K2 Life Drop is a voluntary community service bridge connecting verified blood donors with patients in emergency need. Under Section 19 of the National Blood Transfusion Council (NBTC) guidelines and the Drugs and Cosmetics Act, all blood donations are strictly voluntary. <strong>Commercial sale, purchase, or monetary remuneration of any kind for blood or platelets is strictly prohibited.</strong></p>
+    <p>KK Life Drop is a voluntary community service bridge connecting verified blood donors with patients in emergency need. Under Section 19 of the National Blood Transfusion Council (NBTC) guidelines and the Drugs and Cosmetics Act, all blood donations are strictly voluntary. <strong>Commercial sale, purchase, or monetary remuneration of any kind for blood or platelets is strictly prohibited.</strong></p>
 
     <h2>2. Medical Eligibility & 90-Day Cooldown</h2>
     <p>Donors must be 18 to 65 years of age, weigh at least 45 kg, and observe a mandatory 90-day cooldown between whole-blood donations. Medical eligibility and cross-matching are confirmed by licensed medical officers at the treating hospital.</p>
 
     <h2>3. Disclaimer of Medical Liability</h2>
-    <p>K2 Life Drop is an emergency communication network and does not collect, test, or store physical blood. Final responsibility for blood transfusion, serological screening, and medical treatment rests exclusively with the authorized hospital or blood bank.</p>
+    <p>KK Life Drop is an emergency communication network and does not collect, test, or store physical blood. Final responsibility for blood transfusion, serological screening, and medical treatment rests exclusively with the authorized hospital or blood bank.</p>
 
     <h2>4. Account Deletion & Rights</h2>
     <p>Donors can disable availability or permanently delete their account and personal data at any time directly in the app or by contacting our team.</p>
 
     <h2>5. Contact & Grievance</h2>
-    <p>Kaarai Karangal Social Service Organization, Karaikal, Puducherry UT - 609602, India.<br>
-    Email: support@k2lifedrop.org / admin@k2lifedrop.com</p>
+    <p>Kaarai Karangal Social Service Organization<br>
+    Address: K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India.<br>
+    Email: kaaraikarangal@gmail.com | Helpline: +91 9750807463</p>
 
     <div class="footer">&copy; 2026 Kaarai Karangal Social Service Organization (Reg. No. 31/2025). All rights reserved.</div>
   </div>
@@ -1476,7 +1477,7 @@ HTML_PRIVACY = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Privacy Policy - K2 Life Drop</title>
+  <title>Privacy Policy - KK Life Drop</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #F8FAFC; color: #1E293B; margin: 0; padding: 24px; line-height: 1.6; }
     .container { max-width: 800px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #E2E8F0; }
@@ -1492,7 +1493,7 @@ HTML_PRIVACY = """<!DOCTYPE html>
     <div class="badge">Google Play & Apple App Store Privacy Compliance</div>
     <h1>Privacy Policy</h1>
     <p><strong>Last Updated:</strong> October 2026</p>
-    <p>This Privacy Policy explains how <strong>Kaarai Karangal Social Service Organization</strong> collects, uses, encrypts, and protects your personal information on the <strong>K2 Life Drop</strong> platform.</p>
+    <p>This Privacy Policy explains how <strong>Kaarai Karangal Social Service Organization</strong> collects, uses, encrypts, and protects your personal information on the <strong>KK Life Drop</strong> platform.</p>
 
     <h2>1. Information We Collect</h2>
     <ul>
@@ -1511,8 +1512,8 @@ HTML_PRIVACY = """<!DOCTYPE html>
 
     <h2>4. Grievance Officer & Inquiries</h2>
     <p>Kaarai Karangal Social Service Organization<br>
-    Karaikal, Puducherry UT - 609602, India.<br>
-    Email: privacy@k2lifedrop.org / admin@k2lifedrop.com</p>
+    Address: K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India.<br>
+    Email: kaaraikarangal@gmail.com | Helpline: +91 9750807463</p>
 
     <div class="footer">&copy; 2026 Kaarai Karangal Social Service Organization. All rights reserved.</div>
   </div>

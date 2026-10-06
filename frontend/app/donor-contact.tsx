@@ -42,7 +42,7 @@ export default function DonorContact() {
       <View style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>
         <View style={styles.doneIcon}><Ionicons name="shield-checkmark" size={44} color="#FFFFFF" /></View>
         <Text style={styles.doneTitle}>Request Submitted</Text>
-        <Text style={styles.doneSub}>Your request has been submitted. K2 Life Drop admin will contact you shortly.</Text>
+        <Text style={styles.doneSub}>Your request has been submitted. KK Life Drop admin will contact you shortly.</Text>
         <View style={styles.pill}><Text style={{ color: colors.brandPrimary, fontWeight: "800" }}>{done}</Text></View>
         <Button
           testID="back-home-btn"
@@ -74,7 +74,7 @@ export default function DonorContact() {
         <View style={styles.notice}>
           <Ionicons name="shield-checkmark" size={16} color={colors.brandPrimary} />
           <Text style={styles.noticeText}>
-            For privacy, donor contact details are never shared directly. K2 Life Drop admin coordinates all communication safely.
+            For privacy, donor contact details are never shared directly. KK Life Drop admin coordinates all communication safely.
           </Text>
         </View>
         <Text style={styles.section}>Your Details</Text>

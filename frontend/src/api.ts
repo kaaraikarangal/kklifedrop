@@ -12,7 +12,17 @@ export const TOKEN_KEY = "k2_token";
 export const ROLE_KEY = "k2_role";
 export const DONOR_KEY = "k2_donor";
 export const MOBILE_KEY = "k2_mobile";
+export const ADMIN_USER_KEY = "k2_admin_user";
+export const SUPER_ADMIN_EMAIL = "kaaraikarangal@gmail.com";
 export const BACKEND_URL_KEY = "k2_backend_url";
+
+export const ORG_CONTACT = {
+  name: "Kaarai Karangal Social Service Organization",
+  email: "kaaraikarangal@gmail.com",
+  phone: "+91 9750807463",
+  address: "K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India",
+};
+
 
 export const DEFAULT_LAN_BACKEND_URL = SUPABASE_URL;
 export const DEFAULT_LOCAL_BACKEND_URL = SUPABASE_URL;
@@ -72,12 +82,83 @@ export async function setSession(token: string, role: "user" | "admin", mobile?:
 }
 
 export async function clearSession() {
-  await AsyncStorage.multiRemove([TOKEN_KEY, ROLE_KEY, DONOR_KEY, MOBILE_KEY]);
+  await AsyncStorage.multiRemove([TOKEN_KEY, ROLE_KEY, DONOR_KEY, MOBILE_KEY, ADMIN_USER_KEY]);
 }
 
 export async function getRole(): Promise<string | null> {
   return AsyncStorage.getItem(ROLE_KEY);
 }
+
+export interface ActiveSession {
+  isLoggedIn: boolean;
+  role: "user" | "admin" | null;
+  mobile: string | null;
+  donorId: string | null;
+  token: string | null;
+  isSuperAdmin?: boolean;
+}
+
+export async function getActiveSession(): Promise<ActiveSession> {
+  try {
+    const [token, role, mobile, donorStr, adminUserStr] = await Promise.all([
+      AsyncStorage.getItem(TOKEN_KEY),
+      AsyncStorage.getItem(ROLE_KEY),
+      AsyncStorage.getItem(MOBILE_KEY),
+      AsyncStorage.getItem(DONOR_KEY),
+      AsyncStorage.getItem(ADMIN_USER_KEY),
+    ]);
+
+    // Explicit Admin session
+    if (role === "admin" && token) {
+      let isSuperAdmin = false;
+      if (adminUserStr) {
+        try {
+          const parsed = JSON.parse(adminUserStr);
+          isSuperAdmin = Boolean(parsed?.is_super_admin || parsed?.email?.toLowerCase() === SUPER_ADMIN_EMAIL);
+        } catch {}
+      }
+      return { isLoggedIn: true, role: "admin", mobile: null, donorId: null, token, isSuperAdmin };
+    }
+
+
+    // Active User / Donor session:
+    // If ANY of (token, mobile, donorStr) is present, the user has an active session
+    if (token || mobile || donorStr) {
+      let donorId: string | null = null;
+      if (donorStr) {
+        try {
+          const parsed = JSON.parse(donorStr);
+          donorId = parsed?.id || null;
+        } catch {}
+      }
+
+      // Self-heal session tokens and role in AsyncStorage if any key was missing
+      const healingPairs: [string, string][] = [];
+      if (!token) {
+        healingPairs.push([TOKEN_KEY, `user_session_${mobile || "active"}`]);
+      }
+      if (role !== "user") {
+        healingPairs.push([ROLE_KEY, "user"]);
+      }
+      if (healingPairs.length > 0) {
+        await AsyncStorage.multiSet(healingPairs);
+      }
+
+      return {
+        isLoggedIn: true,
+        role: "user",
+        mobile: mobile || null,
+        donorId,
+        token: token || `user_session_${mobile || "active"}`,
+      };
+    }
+
+    return { isLoggedIn: false, role: null, mobile: null, donorId: null, token: null };
+  } catch {
+    return { isLoggedIn: false, role: null, mobile: null, donorId: null, token: null };
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,12 +229,15 @@ export function getBackendServerUrl(): string {
   if (process.env.EXPO_PUBLIC_BACKEND_URL) {
     return process.env.EXPO_PUBLIC_BACKEND_URL.replace(/\/+$/, "");
   }
+  // Only attempt local backend fallback in web dev environment
   if (typeof window !== "undefined" && window.location) {
-    const protocol = window.location.protocol || "http:";
-    const hostname = window.location.hostname || "localhost";
-    return `${protocol}//${hostname}:8000`;
+    const hostname = window.location.hostname;
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      const protocol = window.location.protocol || "http:";
+      return `${protocol}//${hostname}:8000`;
+    }
   }
-  return "http://localhost:8000";
+  return "";
 }
 
 type WaDeliveryResult = {
@@ -566,7 +650,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   // 6. Admin Login
   if (route === "auth/admin/login" || route === "api/auth/admin/login") {
     const email = (body.email || "").trim().toLowerCase();
-    const password = body.password || "";
+    const password = (body.password || "").trim();
+
+    if (!email || !password) {
+      throw new Error("Access Denied: Email and password are required.");
+    }
 
     const { data: admins, error: adminErr } = await supabase
       .from("admin_users")
@@ -575,30 +663,60 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       .limit(1);
 
     if (adminErr || !admins || admins.length === 0) {
-      throw new Error("Invalid admin email or password");
+      throw new Error("Access Denied: Invalid administrator credentials");
     }
 
     const admin = admins[0];
-    const passwordValid = bcrypt.compareSync(password, admin.password_hash);
-    if (!passwordValid) {
-      throw new Error("Invalid admin email or password");
+    if (admin.status === "suspended") {
+      throw new Error("Access Denied: This administrator account has been suspended by the Super Admin.");
     }
 
+    const passwordValid = bcrypt.compareSync(password, admin.password_hash);
+    if (!passwordValid) {
+      throw new Error("Access Denied: Invalid administrator credentials");
+    }
+
+    const isSuperAdmin = email === SUPER_ADMIN_EMAIL.toLowerCase();
+    const adminRole = isSuperAdmin ? "super_admin" : "sub_admin";
     const adminToken = `k2_adm_${admin.id}_${Date.now()}`;
     await setSession(adminToken, "admin");
+
+    const adminUser = {
+      id: admin.id,
+      email: admin.email,
+      name: admin.name || (isSuperAdmin ? "Kaarai Karangal Super Admin" : "KK Sub-Admin"),
+      role: adminRole,
+      is_super_admin: isSuperAdmin,
+    };
+    await AsyncStorage.setItem(ADMIN_USER_KEY, JSON.stringify(adminUser));
+
+    // Log admin login to audit_logs
+    await supabase.from("audit_logs").insert({
+      admin_id: admin.email,
+      action: "admin_login",
+      target_type: "system",
+      target_id: isSuperAdmin ? "super_admin_console" : "sub_admin_console",
+      timestamp: new Date().toISOString(),
+      metadata: { email: admin.email, role: adminRole, is_super_admin: isSuperAdmin },
+    });
 
     return {
       ok: true,
       token: adminToken,
-      role: "admin",
-      user: { id: admin.id, email: admin.email, name: admin.name || "K2 Admin" },
+      role: adminRole,
+      is_super_admin: isSuperAdmin,
+      user: adminUser,
     } as unknown as T;
   }
 
-  // 7. Donors - Public Listing & Search
+
+  // 7. Donors - Public Listing & Search (PII-Protected: never select raw mobile, email, or aadhaar)
   if (route === "donors" || route === "api/donors") {
     if (method === "GET") {
-      let q = supabase.from("donors").select("*").eq("status", "active");
+      let q = supabase
+        .from("donors")
+        .select("id, full_name, blood_group, area, place, district, state, gender, availability, donation_opt_in, last_donation_date, masked_aadhaar, created_at, status")
+        .eq("status", "active");
 
       const bg = queryParams.get("blood_group");
       if (bg) q = q.eq("blood_group", bg);
@@ -703,7 +821,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
 
     if (method === "DELETE") {
-      await supabase.from("donors").update({ status: "suspended" }).eq("id", donorDoc.id);
+      // Permanent Account Deletion required by Apple Guideline 5.1.1(v) & Google Play
+      await supabase.from("donors").delete().eq("id", donorDoc.id);
       await clearSession();
       return { ok: true } as unknown as T;
     }
@@ -711,13 +830,76 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 9. Donors Push Token
   if (route === "donors/push-token" || route === "api/donors/push-token") {
+    try {
+      const rawMobile = await AsyncStorage.getItem(MOBILE_KEY);
+      const cleanMobile = (rawMobile || "").replace(/\D/g, "").slice(-10);
+      const pushToken = (body.push_token || "").trim();
+      const platform = body.platform || (typeof navigator !== "undefined" ? "web" : "expo");
+
+      if (pushToken && (pushToken.startsWith("ExponentPushToken") || pushToken.startsWith("ExpoPushToken"))) {
+        let donorId = body.donor_id || null;
+
+        if (!donorId) {
+          try {
+            const cachedStr = await AsyncStorage.getItem(DONOR_KEY);
+            if (cachedStr) {
+              const parsed = JSON.parse(cachedStr);
+              donorId = parsed?.id || null;
+            }
+          } catch {}
+        }
+
+        if (!donorId && (cleanMobile || rawMobile)) {
+          const { data: donor } = await supabase
+            .from("donors")
+            .select("id")
+            .or(`mobile.eq.${cleanMobile},mobile.eq.${rawMobile}`)
+            .limit(1)
+            .maybeSingle();
+          donorId = donor?.id || null;
+        }
+
+        if (donorId) {
+          // Check if token already recorded for this donor
+          const { data: existing } = await supabase
+            .from("audit_logs")
+            .select("id")
+            .eq("action", "donor_push_token")
+            .eq("target_id", donorId)
+            .contains("metadata", { push_token: pushToken })
+            .limit(1);
+
+          if (!existing || existing.length === 0) {
+            await supabase.from("audit_logs").insert({
+              action: "donor_push_token",
+              target_id: donorId,
+              target_type: "donor",
+              metadata: {
+                push_token: pushToken,
+                mobile: cleanMobile,
+                platform,
+                updated_at: new Date().toISOString(),
+              },
+            });
+            console.log(`[PushToken] Registered push token for donor ${donorId}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[PushToken] Failed to register push token:", err);
+    }
     return { ok: true } as unknown as T;
   }
 
-  // 10. Single Donor (/donors/:id)
+
+  // 10. Single Donor (/donors/:id) - PII-Protected
   if (route.startsWith("donors/") || route.startsWith("api/donors/")) {
     const donorId = route.replace(/^(api\/)?donors\//, "");
-    const { data, error } = await supabase.from("donors").select("*").eq("id", donorId).single();
+    const { data, error } = await supabase
+      .from("donors")
+      .select("id, full_name, blood_group, area, place, district, state, gender, availability, donation_opt_in, last_donation_date, masked_aadhaar, created_at, status")
+      .eq("id", donorId)
+      .single();
     if (error || !data) throw new Error("Donor not found");
     return { donor: toPublicDonor(data) } as unknown as T;
   }
@@ -868,7 +1050,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 14. Notify Donors for Blood Request
   if (route.includes("/notify") && method === "POST") {
-    const reqId = route.split("/")[1];
+    const parts = route.replace(/^api\//, "").split("/");
+    const reqId = parts[1];
     let donorIds: string[] = body.donor_ids || [];
 
     const { data: request } = await supabase.from("blood_requests").select("*").eq("id", reqId).single();
@@ -899,11 +1082,27 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       : `Urgent blood request: Verified donor match needed for ${request.blood_group} blood in Karaikal.`;
     const message = body.message || defaultMsg;
 
-    // 1. Fetch targeted donors to get their push_tokens and mobiles
+    // 1. Fetch targeted donors to get their mobiles and full names
     const { data: targetDonors } = await supabase
       .from("donors")
-      .select("id, mobile, push_token, full_name")
+      .select("id, mobile, full_name")
       .in("id", donorIds);
+
+    // Fetch latest push tokens from audit_logs for these donors
+    const { data: pushLogs } = await supabase
+      .from("audit_logs")
+      .select("target_id, metadata, timestamp")
+      .eq("action", "donor_push_token")
+      .in("target_id", donorIds)
+      .order("timestamp", { ascending: false });
+
+    const pushTokenMap = new Map<string, string>();
+    for (const log of pushLogs || []) {
+      const meta = log.metadata as any;
+      if (meta?.push_token && !pushTokenMap.has(log.target_id)) {
+        pushTokenMap.set(log.target_id, meta.push_token);
+      }
+    }
 
     // 2. Upsert notification records in database
     for (const donorId of donorIds) {
@@ -921,41 +1120,60 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       );
     }
 
+    // Collect all valid unique tokens associated with the targeted donors
+    const donorPushTokens = new Set<string>();
+    for (const log of pushLogs || []) {
+      const meta = log.metadata as any;
+      const tok = meta?.push_token;
+      if (tok && (tok.startsWith("ExponentPushToken") || tok.startsWith("ExpoPushToken"))) {
+        donorPushTokens.add(tok);
+      }
+    }
+
     // 3. Dispatch Expo Push Notifications (Wakes phone even if app is completely closed)
     const pushMessages: any[] = [];
-    for (const d of targetDonors || []) {
-      if (d.push_token && (d.push_token.startsWith("ExponentPushToken") || d.push_token.startsWith("ExpoPushToken"))) {
-        pushMessages.push({
-          to: d.push_token,
-          sound: "default",
-          title: `🚨 ${request.urgency === "Emergency" ? "EMERGENCY: " : isReminder ? "REMINDER: " : ""}${request.blood_group} Blood Required`,
-          body: `Patient at ${request.hospital_name || "Karaikal"} urgently needs ${request.blood_group} blood (${request.units_required || 1} Unit). Tap to respond!`,
-          channelId: "emergency-blood-alerts",
-          priority: "high",
-          badge: 1,
-          _displayInForeground: true,
-          data: { request_id: request.request_number || request.id },
-        });
-      }
+    for (const pushToken of Array.from(donorPushTokens)) {
+      pushMessages.push({
+        to: pushToken,
+        sound: "default",
+        title: `🚨 ${request.urgency === "Emergency" ? "EMERGENCY: " : isReminder ? "REMINDER: " : ""}${request.blood_group} Blood Required`,
+        body: `Patient at ${request.hospital_name || "Karaikal"} urgently needs ${request.blood_group} blood (${request.units_required || 1} Unit). Tap to respond!`,
+        channelId: "emergency-blood-alerts",
+        priority: "high",
+        badge: 1,
+        _displayInForeground: true,
+        data: { request_id: request.id, request_number: request.request_number },
+      });
     }
 
     if (pushMessages.length > 0) {
-      try {
-        await fetch("https://exp.host/--/api/v2/push/send", {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(pushMessages),
-        });
-      } catch (e) {
-        console.warn("[Push] Error sending Expo push notifications:", e);
+      const chunkSize = 100;
+      for (let i = 0; i < pushMessages.length; i += chunkSize) {
+        const chunk = pushMessages.slice(i, i + chunkSize);
+        try {
+          const expoRes = await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Accept-Encoding": "gzip, deflate",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(chunk),
+          });
+          const expoResult = await expoRes.json();
+          console.log(`[Push] Dispatched batch of ${chunk.length} push notification(s):`, expoResult);
+        } catch (e) {
+          console.warn("[Push] Error sending Expo push notifications batch:", e);
+        }
       }
     }
 
-    // 4. Dispatch SMS via Fast2SMS so offline / closed app donors receive mobile text
-    if (FAST2SMS_API_KEY && targetDonors && targetDonors.length > 0) {
+    // 4. Dispatch SMS via Fast2SMS
+    // Skipped on web (browsers block fast2sms.com due to CORS) and skipped for reminders (reminders are push-only alerts)
+    const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
+    const shouldDispatchSms = !isBrowser && !isReminder && body.send_sms === true;
+
+    if (shouldDispatchSms && FAST2SMS_API_KEY && targetDonors && targetDonors.length > 0) {
       const mobiles = targetDonors
         .map((d) => (d.mobile || "").replace(/\D/g, "").slice(-10))
         .filter((m) => m.length === 10);
@@ -1003,17 +1221,42 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 16. Notifications (/notifications)
   if (route === "notifications" || route === "api/notifications") {
-    const mobile = await AsyncStorage.getItem(MOBILE_KEY);
-    if (!mobile) return { notifications: [] } as unknown as T;
+    const rawMobile = await AsyncStorage.getItem(MOBILE_KEY);
+    let donorId: string | null = null;
 
-    const { data: donor } = await supabase.from("donors").select("id").eq("mobile", mobile).single();
-    if (!donor) return { notifications: [] } as unknown as T;
+    if (rawMobile) {
+      const cleanMobile = rawMobile.replace(/\D/g, "").slice(-10);
+      const { data: donor } = await supabase
+        .from("donors")
+        .select("id")
+        .or(`mobile.eq.${cleanMobile},mobile.eq.${rawMobile}`)
+        .limit(1)
+        .maybeSingle();
+      donorId = donor?.id || null;
+    }
 
-    const { data: notifs } = await supabase
+    if (!donorId) {
+      try {
+        const cachedStr = await AsyncStorage.getItem(DONOR_KEY);
+        if (cachedStr) {
+          const parsed = JSON.parse(cachedStr);
+          donorId = parsed?.id || null;
+        }
+      } catch {}
+    }
+
+    if (!donorId) return { notifications: [] } as unknown as T;
+
+    const { data: notifs, error: notifErr } = await supabase
       .from("notifications")
       .select("*, blood_requests(*)")
-      .eq("donor_id", donor.id)
+      .eq("donor_id", donorId)
       .order("sent_at", { ascending: false });
+
+    if (notifErr) {
+      console.warn("[Notifications] Error fetching notifications:", notifErr);
+      return { notifications: [] } as unknown as T;
+    }
 
     // Normalize so joined blood_requests is accessible as both `request` and `blood_requests`
     const formatted = (notifs || []).map((item) => ({
@@ -1242,9 +1485,209 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 24. Admin Audit Logs
   if (route === "admin/audit-logs" || route === "api/admin/audit-logs") {
-    const { data } = await supabase.from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(100);
+    const { data } = await supabase.from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(150);
     return { logs: data || [] } as unknown as T;
   }
+
+  // 25. Admin Profile / Current Admin
+  if (route === "admin/me" || route === "api/admin/me") {
+    let currentAdmin: any = null;
+    const rawAdm = await AsyncStorage.getItem(ADMIN_USER_KEY);
+    if (rawAdm) {
+      try { currentAdmin = JSON.parse(rawAdm); } catch {}
+    }
+    if (!currentAdmin || !currentAdmin.email) {
+      throw new Error("Admin authentication required. Please sign in.");
+    }
+    return { ok: true, admin: currentAdmin } as unknown as T;
+  }
+
+  // 26. Sub-Admins Management (Super Admin Exclusive)
+  if (
+    route === "admin/sub-admins" ||
+    route === "api/admin/sub-admins" ||
+    route === "admin/admins" ||
+    route === "api/admin/admins"
+  ) {
+    let currentAdmin: any = null;
+    const rawAdm = await AsyncStorage.getItem(ADMIN_USER_KEY);
+    if (rawAdm) {
+      try { currentAdmin = JSON.parse(rawAdm); } catch {}
+    }
+    if (!currentAdmin || !currentAdmin.email) {
+      throw new Error("Admin authentication required. Please sign in.");
+    }
+    const isSuperAdmin = Boolean(
+      currentAdmin?.is_super_admin ||
+      currentAdmin?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()
+    );
+
+    // GET: List all admins
+    if (method === "GET") {
+      const { data: adminsList, error: admErr } = await supabase
+        .from("admin_users")
+        .select("id, name, email, status, created_at")
+        .order("created_at", { ascending: true });
+
+      if (admErr) throw new Error(admErr.message);
+
+      const enriched = (adminsList || []).map((a: any) => {
+        const isSuper = a.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+        return {
+          ...a,
+          role: isSuper ? "super_admin" : "sub_admin",
+          role_label: isSuper ? "Super Admin" : "Sub-Admin",
+          is_super_admin: isSuper,
+        };
+      });
+
+      return { ok: true, admins: enriched, is_super_admin: isSuperAdmin } as unknown as T;
+    }
+
+    // POST: Create new sub-admin (Super Admin only)
+    if (method === "POST") {
+      if (!isSuperAdmin) {
+        throw new Error("Access Denied: Only Super Admin has permission to create sub-admins.");
+      }
+
+      const name = (body.name || "").trim();
+      const email = (body.email || "").trim().toLowerCase();
+      const password = (body.password || "").trim();
+
+      if (!name) throw new Error("Please enter sub-admin's full name");
+      if (!email || !email.includes("@")) throw new Error("Please enter a valid email address");
+      if (password.length < 6) throw new Error("Password must be at least 6 characters");
+
+      // Check if email already registered
+      const { data: existing } = await supabase
+        .from("admin_users")
+        .select("id")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (existing) {
+        throw new Error(`An admin with email "${email}" already exists.`);
+      }
+
+      const password_hash = bcrypt.hashSync(password, 10);
+      const { data: created, error: createErr } = await supabase
+        .from("admin_users")
+        .insert({
+          name,
+          email,
+          password_hash,
+          status: "active",
+        })
+        .select("id, name, email, status, created_at")
+        .single();
+
+      if (createErr) throw new Error(createErr.message);
+
+      // Record audit log
+      await supabase.from("audit_logs").insert({
+        admin_id: currentAdmin?.email || SUPER_ADMIN_EMAIL,
+        action: "create_sub_admin",
+        target_type: "sub_admin",
+        target_id: created.id,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          created_sub_admin_email: email,
+          created_sub_admin_name: name,
+          created_by: currentAdmin?.email || SUPER_ADMIN_EMAIL,
+        },
+      });
+
+      return {
+        ok: true,
+        message: "Sub-Admin created successfully",
+        admin: {
+          ...created,
+          role: "sub_admin",
+          role_label: "Sub-Admin",
+          is_super_admin: false,
+        },
+      } as unknown as T;
+    }
+
+    // PATCH: Toggle active/suspended status (Super Admin only)
+    if (method === "PATCH") {
+      if (!isSuperAdmin) {
+        throw new Error("Access Denied: Only Super Admin can modify sub-admin access.");
+      }
+
+      const targetId = body.admin_id || body.id;
+      if (!targetId) throw new Error("Admin ID is required");
+
+      const { data: target } = await supabase
+        .from("admin_users")
+        .select("id, email, status, name")
+        .eq("id", targetId)
+        .single();
+
+      if (!target) throw new Error("Admin not found");
+      if (target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+        throw new Error("Action Forbidden: Super Admin account cannot be suspended.");
+      }
+
+      const newStatus = body.status || (target.status === "active" ? "suspended" : "active");
+      await supabase.from("admin_users").update({ status: newStatus }).eq("id", targetId);
+
+      await supabase.from("audit_logs").insert({
+        admin_id: currentAdmin?.email || SUPER_ADMIN_EMAIL,
+        action: "toggle_admin_status",
+        target_type: "sub_admin",
+        target_id: targetId,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          target_email: target.email,
+          target_name: target.name,
+          new_status: newStatus,
+          modified_by: currentAdmin?.email || SUPER_ADMIN_EMAIL,
+        },
+      });
+
+      return { ok: true, status: newStatus, message: `Admin status set to ${newStatus}` } as unknown as T;
+    }
+
+    // DELETE: Delete sub-admin (Super Admin only)
+    if (method === "DELETE") {
+      if (!isSuperAdmin) {
+        throw new Error("Access Denied: Only Super Admin can delete admin accounts.");
+      }
+
+      const targetId = body.admin_id || body.id || queryParams.get("id");
+      if (!targetId) throw new Error("Admin ID is required");
+
+      const { data: target } = await supabase
+        .from("admin_users")
+        .select("id, email, name")
+        .eq("id", targetId)
+        .single();
+
+      if (!target) throw new Error("Admin not found");
+      if (target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+        throw new Error("Action Forbidden: Super Admin account cannot be deleted.");
+      }
+
+      await supabase.from("admin_users").delete().eq("id", targetId);
+
+      await supabase.from("audit_logs").insert({
+        admin_id: currentAdmin?.email || SUPER_ADMIN_EMAIL,
+        action: "delete_sub_admin",
+        target_type: "sub_admin",
+        target_id: targetId,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          deleted_email: target.email,
+          deleted_name: target.name,
+          deleted_by: currentAdmin?.email || SUPER_ADMIN_EMAIL,
+        },
+      });
+
+      return { ok: true, message: "Sub-Admin deleted successfully" } as unknown as T;
+    }
+  }
+
 
   // Fallback direct fetch if any custom route
   console.warn(`[api] Unhandled serverless route: ${route}, executing fallback`);

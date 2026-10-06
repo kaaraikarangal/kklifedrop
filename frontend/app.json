@@ -10,7 +10,8 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "org.kaaraikarangal.kklifedrop"
+      "bundleIdentifier": "org.kaaraikarangal.kklifedrop",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,11 +19,10 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "org.kaaraikarangal.kklifedrop",
-      "usesCleartextTraffic": true,
+      "versionCode": 1,
       "permissions": [
         "INTERNET",
         "POST_NOTIFICATIONS",
-        "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
       ]
     },
