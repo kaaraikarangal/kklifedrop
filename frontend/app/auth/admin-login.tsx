@@ -23,6 +23,7 @@ import {
 import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
+import { safeBack } from "@/src/navigation";
 import { BrandLogo } from "@/src/components/BrandLogo";
 
 export default function AdminLogin() {
@@ -69,7 +70,7 @@ export default function AdminLogin() {
         {/* Top Actions Row */}
         <View style={styles.topBarRow}>
           <Pressable
-            onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+            onPress={() => safeBack("/")}
             style={styles.backBtn}
             testID="back-btn"
           >

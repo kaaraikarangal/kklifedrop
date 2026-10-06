@@ -21,6 +21,7 @@ import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BrandLogo } from "@/src/components/BrandLogo";
+import { safeBack } from "@/src/navigation";
 
 const OTP_LENGTH = 6;
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -203,10 +204,8 @@ export default function MobileAuth() {
       setOtp("");
       setAttemptsLeft(null);
       animateToMobile();
-    } else if (router.canGoBack()) {
-      router.back();
     } else {
-      router.replace("/");
+      safeBack("/");
     }
   }
 

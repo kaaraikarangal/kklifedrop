@@ -415,6 +415,11 @@ class DonorRegistrationIn(BaseModel):
 
 
 class DonorUpdateIn(BaseModel):
+    full_name: Optional[str] = None
+    gender: Optional[Literal["Male", "Female", "Other"]] = None
+    date_of_birth: Optional[str] = None
+    blood_group: Optional[Literal["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]] = None
+    email: Optional[EmailStr] = None
     availability: Optional[Literal["Available", "Not Available"]] = None
     donation_opt_in: Optional[bool] = None
     last_donation_date: Optional[str] = None
@@ -894,7 +899,12 @@ async def my_profile(user: dict = Depends(current_user)):
         raise HTTPException(404, "Not registered")
     doc = r.data[0]
     out = to_public_donor(doc)
-    out.update({"mobile": doc.get("mobile"), "email": doc.get("email")})
+    out.update({
+        "mobile": doc.get("mobile"),
+        "email": doc.get("email"),
+        "pincode": doc.get("pincode"),
+        "date_of_birth": doc.get("date_of_birth"),
+    })
     return {"donor": out}
 
 
@@ -920,16 +930,22 @@ async def update_me(body: DonorUpdateIn, user: dict = Depends(current_user)):
         raise HTTPException(404, "Not registered")
     doc = r.data[0]
 
+    is_status_only = all(k in ["availability", "donation_opt_in", "updated_at"] for k in updates.keys())
     await record_audit_log(
         actor_id=f"user:{user['sub']}",
-        action="donor_status_toggle",
+        action="donor_status_toggle" if is_status_only else "donor_profile_update",
         target_type="donor",
         target_id=doc["id"],
         metadata=updates,
     )
 
     out = to_public_donor(doc)
-    out.update({"mobile": doc.get("mobile"), "email": doc.get("email")})
+    out.update({
+        "mobile": doc.get("mobile"),
+        "email": doc.get("email"),
+        "pincode": doc.get("pincode"),
+        "date_of_birth": doc.get("date_of_birth"),
+    })
     return {"ok": True, "donor": out}
 
 

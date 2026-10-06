@@ -950,14 +950,45 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     const donorDoc = data[0];
 
+    const toPrivateDonor = (d: any) => {
+      const pub = toPublicDonor(d);
+      return {
+        ...pub,
+        mobile: d.mobile,
+        email: d.email,
+        pincode: d.pincode,
+        date_of_birth: d.date_of_birth,
+      };
+    };
+
     if (method === "GET") {
-      return { donor: toPublicDonor(donorDoc) } as unknown as T;
+      return { donor: toPrivateDonor(donorDoc) } as unknown as T;
     }
 
     if (method === "PATCH") {
       const updates: any = {};
+      if (body.full_name !== undefined) updates.full_name = String(body.full_name).trim();
+      if (body.gender !== undefined) updates.gender = body.gender;
+      if (body.date_of_birth !== undefined) updates.date_of_birth = body.date_of_birth;
+      if (body.blood_group !== undefined) updates.blood_group = body.blood_group;
+      if (body.email !== undefined) updates.email = body.email ? String(body.email).trim() : null;
+      if (body.area !== undefined) updates.area = String(body.area).trim();
+      if (body.place !== undefined) updates.place = String(body.place).trim();
+      if (body.district !== undefined) updates.district = String(body.district).trim();
+      if (body.state !== undefined) updates.state = String(body.state).trim();
+      if (body.pincode !== undefined) updates.pincode = String(body.pincode).trim();
       if (body.availability !== undefined) updates.availability = body.availability;
       if (body.donation_opt_in !== undefined) updates.donation_opt_in = body.donation_opt_in;
+      if (body.last_donation_date !== undefined) updates.last_donation_date = body.last_donation_date || null;
+      if (body.aadhaar !== undefined && body.aadhaar) {
+        const cleanAadhaar = String(body.aadhaar).replace(/\D/g, "");
+        if (cleanAadhaar.length === 12) {
+          updates.encrypted_aadhaar = `ENCR_${cleanAadhaar}`;
+          updates.masked_aadhaar = `XXXX XXXX ${cleanAadhaar.slice(-4)}`;
+        }
+      }
+
+      updates.updated_at = new Date().toISOString();
 
       const { data: updated, error: uErr } = await supabase
         .from("donors")
@@ -967,18 +998,23 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         .single();
 
       if (uErr) throw new Error(uErr.message);
-      const pub = toPublicDonor(updated);
+      const pub = toPrivateDonor(updated);
       await AsyncStorage.setItem(DONOR_KEY, JSON.stringify(pub));
+
+      const isStatusOnly = Object.keys(updates).every((k) =>
+        ["availability", "donation_opt_in", "updated_at"].includes(k)
+      );
 
       await recordAuditLog({
         actor: `user:${mobile}`,
-        action: "donor_status_toggle",
+        action: isStatusOnly ? "donor_status_toggle" : "donor_profile_update",
         target_type: "donor",
         target_id: donorDoc.id,
         metadata: {
-          donor_name: donorDoc.full_name,
-          availability: updates.availability || donorDoc.availability,
-          donation_opt_in: updates.donation_opt_in !== undefined ? updates.donation_opt_in : donorDoc.donation_opt_in,
+          donor_name: updated.full_name,
+          updated_fields: Object.keys(updates),
+          blood_group: updated.blood_group,
+          district: updated.district,
         },
       });
 

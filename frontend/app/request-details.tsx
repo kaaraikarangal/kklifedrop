@@ -6,6 +6,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
+import { safeBack } from "@/src/navigation";
 
 export default function RequestDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -21,7 +22,7 @@ export default function RequestDetails() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.surface }} contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }}>
       <Pressable
-        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+        onPress={() => safeBack("/(tabs)/requests")}
         style={styles.back}
       >
         <Ionicons name="chevron-back" size={24} color={colors.onSurface} />

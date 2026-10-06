@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Alert, Platform, Linking } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
@@ -19,7 +19,14 @@ export default function Profile() {
       setMe(r.donor);
     } catch { setMe(null); }
   }
+
   useEffect(() => { load(); }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [])
+  );
 
   async function toggleAvail() {
     const next = me.availability === "Available" ? "Not Available" : "Available";
@@ -86,7 +93,7 @@ export default function Profile() {
     <ScrollView style={{ flex: 1, backgroundColor: colors.surface }} contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24, paddingHorizontal: spacing.lg }}>
       <View style={styles.headerCard}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{me.full_name.charAt(0)}</Text>
+          <Text style={styles.avatarText}>{me.full_name ? me.full_name.charAt(0) : "D"}</Text>
         </View>
         <Text style={styles.name}>{me.full_name}</Text>
         <View style={{ marginTop: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -96,7 +103,32 @@ export default function Profile() {
             <Text style={styles.meta}>Aadhaar: {me.masked_aadhaar}</Text>
           </View>
         </View>
+
+        <Pressable
+          testID="profile-edit-header-btn"
+          onPress={() => router.push("/edit-profile")}
+          style={styles.editBtn}
+        >
+          <Ionicons name="create-outline" size={14} color="#FFFFFF" />
+          <Text style={styles.editBtnText}>Edit Profile</Text>
+        </Pressable>
       </View>
+
+      <Text style={styles.section}>Account Management</Text>
+      <Pressable
+        testID="profile-edit-row"
+        style={styles.navRow}
+        onPress={() => router.push("/edit-profile")}
+      >
+        <View style={styles.navRowLeft}>
+          <Ionicons name="person-circle-outline" size={20} color={colors.brandPrimary} />
+          <View>
+            <Text style={styles.navRowTitle}>Edit Profile Information</Text>
+            <Text style={{ fontSize: 11, color: colors.muted }}>Name, Blood Group, Location, Contact</Text>
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </Pressable>
 
       <Text style={styles.section}>Donation Settings</Text>
       <View style={styles.row}>
@@ -218,6 +250,25 @@ const styles = StyleSheet.create({
   avatarText: { color: "#FFFFFF", fontSize: 28, fontWeight: "800" },
   name: { fontSize: 20, fontWeight: "800", color: colors.onSurface, marginTop: 10 },
   meta: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  editBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.brandPrimary,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    borderRadius: radius.pill,
+    marginTop: 14,
+    shadowColor: colors.brandPrimary,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  editBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
   section: { fontSize: 13, fontWeight: "800", color: colors.brandPrimary, letterSpacing: 0.5, textTransform: "uppercase", marginTop: spacing.lg, marginBottom: spacing.md },
   row: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.md, marginBottom: 10 },
   rowTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface },

@@ -9,6 +9,7 @@ import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
+import { safeBack } from "@/src/navigation";
 
 const GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const URGENCY = ["Normal", "Urgent", "Emergency"];
@@ -60,7 +61,7 @@ export default function RequestBlood() {
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.surface }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 32 }} keyboardShouldPersistTaps="handled">
         <Pressable
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/home"))}
+          onPress={() => safeBack("/(tabs)/requests")}
           style={styles.back}
         >
           <Ionicons name="chevron-back" size={24} color={colors.onSurface} />

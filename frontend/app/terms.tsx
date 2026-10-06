@@ -5,21 +5,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { getActiveSession } from "@/src/api";
+import { safeBack } from "@/src/navigation";
 
 export default function TermsAndConditions() {
   const insets = useSafeAreaInsets();
 
   const handleBack = async () => {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
     const session = await getActiveSession();
-    if (session.isLoggedIn) {
-      router.replace("/(tabs)/home");
-    } else {
-      router.replace("/");
-    }
+    const fallback = session.isLoggedIn ? "/(tabs)/home" : "/";
+    safeBack(fallback);
   };
 
   return (
