@@ -98,7 +98,7 @@ export default function PrivacyPolicy() {
             Our services are not intended for individuals under 18 years of age, as 18 is the minimum legal age for blood donation in India. We do not knowingly collect personal data from minors.
           </Text>
 
-          <SectionTitle number="7" title="Data Protection Officer & Contact" />
+          <SectionTitle number="7" title="Data Protection Officer & Organization Contact" />
           <Text style={styles.p}>
             If you have questions or grievances regarding this Privacy Policy or your data rights, contact our Data Protection Coordinator:
           </Text>
@@ -108,6 +108,18 @@ export default function PrivacyPolicy() {
             <Text style={styles.contactText}>Address: K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India</Text>
             <Text style={styles.contactText}>Email: kaaraikarangal@gmail.com</Text>
             <Text style={styles.contactText}>Phone / Helpline: +91 9750807463</Text>
+          </View>
+
+          <SectionTitle number="8" title="Technical Architecture & Developer Information" />
+          <Text style={styles.p}>
+            For technical inquiries, system architecture, or security disclosures:
+          </Text>
+          <View style={[styles.contactBox, { backgroundColor: "#F0F9FF", borderColor: "#BAE6FD" }]}>
+            <Text style={[styles.contactTitle, { color: "#0284C7" }]}>Barathraj S</Text>
+            <Text style={styles.contactText}>Role: Software Engineer</Text>
+            <Text style={styles.contactText}>Email: jcibarathraj@gmail.com</Text>
+            <Text style={styles.contactText}>Phone: +91 7867009044</Text>
+            <Text style={styles.contactText}>Portfolio: https://barathraj.web.app/</Text>
           </View>
         </View>
       </ScrollView>

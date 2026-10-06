@@ -97,7 +97,7 @@ export default function TermsAndConditions() {
             Donors retain complete autonomy over their data. You can toggle your donation availability off at any time, opt out of push notifications, or request permanent account deletion via the Profile section of the app.
           </Text>
 
-          <SectionTitle number="7" title="Grievance & Contact Information" />
+          <SectionTitle number="7" title="Grievance & Organization Contact" />
           <Text style={styles.p}>
             For questions, grievances, or legal inquiries regarding these Terms:
           </Text>
@@ -106,6 +106,18 @@ export default function TermsAndConditions() {
             <Text style={styles.contactText}>Address: K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India</Text>
             <Text style={styles.contactText}>Email: kaaraikarangal@gmail.com</Text>
             <Text style={styles.contactText}>Helpline: +91 9750807463</Text>
+          </View>
+
+          <SectionTitle number="8" title="Technical Engineering & Developer Information" />
+          <Text style={styles.p}>
+            Application engineered and maintained by:
+          </Text>
+          <View style={[styles.contactBox, { backgroundColor: "#F0F9FF", borderColor: "#BAE6FD" }]}>
+            <Text style={[styles.contactTitle, { color: "#0284C7" }]}>Barathraj S</Text>
+            <Text style={styles.contactText}>Role: Software Engineer</Text>
+            <Text style={styles.contactText}>Email: jcibarathraj@gmail.com</Text>
+            <Text style={styles.contactText}>Phone: +91 7867009044</Text>
+            <Text style={styles.contactText}>Portfolio: https://barathraj.web.app/</Text>
           </View>
         </View>
       </ScrollView>

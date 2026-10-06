@@ -10,6 +10,7 @@ import {
   Easing,
   Dimensions,
   Platform,
+  Linking,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -400,6 +401,18 @@ export default function Landing() {
               <Text style={styles.legalLinkText}>Privacy Policy</Text>
             </Pressable>
           </View>
+
+          <Pressable
+            style={styles.devCreditRow}
+            onPress={() => Linking.openURL("https://barathraj.web.app/")}
+            testID="landing-developer-btn"
+          >
+            <Ionicons name="code-slash" size={13} color="#0284C7" />
+            <Text style={styles.devCreditText}>
+              Developed by <Text style={styles.devCreditName}>Barathraj S</Text> • Software Engineer
+            </Text>
+          </Pressable>
+
           <Pressable
             testID="admin-login-dot"
             hitSlop={{ top: 12, bottom: 12, left: 24, right: 24 }}
@@ -950,6 +963,28 @@ const styles = StyleSheet.create({
   legalDot: {
     fontSize: 12,
     color: "#CBD5E1",
+  },
+  devCreditRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    backgroundColor: "#F0F9FF",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  devCreditText: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "500",
+  },
+  devCreditName: {
+    fontWeight: "700",
+    color: "#0369A1",
   },
   adminSecretBtn: {
     paddingVertical: 8,

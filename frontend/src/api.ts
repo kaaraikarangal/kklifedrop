@@ -23,6 +23,15 @@ export const ORG_CONTACT = {
   address: "K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602, India",
 };
 
+export const DEVELOPER_INFO = {
+  name: "Barathraj S",
+  role: "Software Engineer",
+  email: "jcibarathraj@gmail.com",
+  phone: "7867009044",
+  formatted_phone: "+91 7867009044",
+  website: "https://barathraj.web.app/",
+};
+
 
 export const DEFAULT_LAN_BACKEND_URL = SUPABASE_URL;
 export const DEFAULT_LOCAL_BACKEND_URL = SUPABASE_URL;
@@ -350,6 +359,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       organization: "Kaarai Karangal Samooga Sevai Amaippu",
       registration_no: "31/2025",
       iso_certified: "ISO 9001:2015",
+      developer: DEVELOPER_INFO,
     } as unknown as T;
   }
 
