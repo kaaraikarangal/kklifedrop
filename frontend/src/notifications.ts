@@ -242,7 +242,7 @@ export function setupNotificationListeners() {
       .channel("realtime-emergency-blood-alerts")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications" },
+        { event: "*", schema: "public", table: "notifications" },
         async (payload: any) => {
           try {
             const newNotif = payload?.new;
