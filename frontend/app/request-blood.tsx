@@ -34,8 +34,9 @@ export default function RequestBlood() {
     try {
       const payload = { ...f, units_required: parseInt(f.units_required, 10) || 1, requester_email: f.requester_email || null };
       const r: any = await api("/blood-requests", { body: payload });
-      setDone(r.request_id);
-      toast("success", "Submitted", `Request ID: ${r.request_id}`);
+      const reqId = r?.request_id || r?.request_number || r?.request?.request_number || r?.id || "Submitted";
+      setDone(reqId);
+      toast("success", "Submitted", `Request ID: ${reqId}`);
     } catch (e: any) {
       toast("error", "Failed", e.message);
     } finally { setLoading(false); }

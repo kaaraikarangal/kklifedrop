@@ -746,7 +746,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     if (method === "POST") {
       const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
       const randSuffix = Math.floor(100 + Math.random() * 900);
-      const requestNumber = `K2-BR-${today}-${randSuffix}`;
+      const requestNumber = `KK-BR-${today}-${randSuffix}`;
 
       const insertData = {
         request_number: requestNumber,
@@ -770,13 +770,54 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
       const { data, error } = await supabase.from("blood_requests").insert(insertData).select().single();
       if (error) throw new Error(error.message);
-      return { ok: true, request: data } as unknown as T;
+
+      const assignedNumber = data?.request_number || requestNumber;
+      return {
+        ok: true,
+        request_id: assignedNumber,
+        request_number: assignedNumber,
+        id: data?.id,
+        status: data?.status || "Pending",
+        request: data,
+      } as unknown as T;
     }
   }
 
   // 12. Contact Donor Flow (/blood-requests/contact-donor)
   if (route === "blood-requests/contact-donor" || route === "api/blood-requests/contact-donor") {
-    return { ok: true, message: "Contact request submitted to hospital admin" } as unknown as T;
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const randSuffix = Math.floor(100 + Math.random() * 900);
+    const requestNumber = `KK-BR-${today}-${randSuffix}`;
+
+    const insertData = {
+      request_number: requestNumber,
+      patient_name: body.patient_name,
+      blood_group: body.blood_group,
+      units_required: 1,
+      hospital_name: body.hospital_name,
+      hospital_area: body.hospital_area || body.hospital_city || "Karaikal",
+      hospital_city: body.hospital_city || "Karaikal",
+      required_date: new Date().toISOString().slice(0, 10),
+      urgency: body.urgency || "Normal",
+      requester_name: body.requester_name,
+      requester_mobile: (body.requester_mobile || "").replace(/\D/g, "").slice(-10),
+      relationship: "Self",
+      additional_message: body.additional_message || null,
+      status: "Admin Reviewing",
+      donor_id_contacted: body.donor_id || null,
+    };
+
+    const { data } = await supabase.from("blood_requests").insert(insertData).select().single();
+    const assignedNumber = data?.request_number || requestNumber;
+
+    return {
+      ok: true,
+      request_id: assignedNumber,
+      request_number: assignedNumber,
+      id: data?.id,
+      message: "Your request has been submitted. KK Life Drop admin will contact you shortly.",
+      request: data,
+    } as unknown as T;
   }
 
   // 13. Matching Donors for Blood Request
@@ -874,7 +915,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   if (route.startsWith("blood-requests/") || route.startsWith("api/blood-requests/")) {
     const reqId = route.replace(/^(api\/)?blood-requests\//, "");
     let q = supabase.from("blood_requests").select("*");
-    if (reqId.includes("-") && reqId.startsWith("K2-")) {
+    if (reqId.startsWith("KK-") || reqId.startsWith("K2-") || reqId.startsWith("BR-")) {
       q = q.eq("request_number", reqId);
     } else {
       q = q.eq("id", reqId);

@@ -29,7 +29,8 @@ export default function DonorContact() {
     setLoading(true);
     try {
       const r: any = await api("/blood-requests/contact-donor", { body: { donor_id: id, blood_group: donor.blood_group, ...f } });
-      setDone(r.request_id);
+      const reqId = r?.request_id || r?.request_number || r?.request?.request_number || r?.id || "Submitted";
+      setDone(reqId);
     } catch (e: any) { toast("error", "Failed", e.message); }
     finally { setLoading(false); }
   }
