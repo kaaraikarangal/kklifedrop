@@ -1,5 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import bcrypt from "bcryptjs";
+
+// React Native (Hermes/JSC) crypto PRNG fallback for bcryptjs
+try {
+  bcrypt.setRandomFallback((len: number) => {
+    const buf: number[] = [];
+    for (let i = 0; i < len; i++) {
+      buf.push(Math.floor(Math.random() * 256));
+    }
+    return buf as any;
+  });
+} catch {}
 import {
   FAST2SMS_API_KEY,
   FAST2SMS_MESSAGE_ID,

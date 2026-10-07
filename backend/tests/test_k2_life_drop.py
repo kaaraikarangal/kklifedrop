@@ -339,7 +339,7 @@ class TestAdmin:
 
     def test_admin_login_wrong_password(self, session, api_base):
         r = session.post(f"{api_base}/auth/admin/login", json={
-            "email": "admin@k2lifedrop.com", "password": "wrongpass"})
+            "email": "kaaraikarangal@gmail.com", "password": "wrongpass"})
         assert r.status_code == 401
 
     def test_admin_stats_no_token(self, session, api_base):

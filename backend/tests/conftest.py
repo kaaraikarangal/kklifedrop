@@ -26,8 +26,8 @@ def session():
 @pytest.fixture(scope="session")
 def admin_token(session, api_base):
     r = session.post(f"{api_base}/auth/admin/login", json={
-        "email": "admin@k2lifedrop.com",
-        "password": "Admin@123",
+        "email": "kaaraikarangal@gmail.com",
+        "password": "Kaaraikarangal@12345",
     })
     assert r.status_code == 200, f"Admin login failed: {r.status_code} {r.text}"
     return r.json()["token"]
