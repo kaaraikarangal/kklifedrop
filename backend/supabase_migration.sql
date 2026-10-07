@@ -110,11 +110,89 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
   metadata jsonb
 );
 
--- Backend uses service_role, RLS is not needed and would block service_role inserts.
-ALTER TABLE public.donors DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.otps DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.blood_requests DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.notifications DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.donor_responses DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.admin_users DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.audit_logs DISABLE ROW LEVEL SECURITY;
+-- ==============================================================================
+-- PRODUCTION ROW LEVEL SECURITY (RLS) POLICIES
+-- ==============================================================================
+
+-- 1. Enable RLS on all tables
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.otps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.donors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.blood_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.donor_responses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- 2. admin_users: Strict zero public access (Handled exclusively via admin-auth Edge Function)
+DROP POLICY IF EXISTS "Deny public admin_users access" ON public.admin_users;
+CREATE POLICY "Deny public admin_users access"
+  ON public.admin_users
+  FOR ALL
+  TO anon, authenticated
+  USING (false);
+
+-- 3. otps: Strict zero public access (Handled exclusively via send-otp and verify-otp Edge Functions)
+DROP POLICY IF EXISTS "Deny public otps access" ON public.otps;
+CREATE POLICY "Deny public otps access"
+  ON public.otps
+  FOR ALL
+  TO anon, authenticated
+  USING (false);
+
+-- 4. donors: Allow public registration, viewing active donors, and donor updates
+DROP POLICY IF EXISTS "Allow public donor registration" ON public.donors;
+CREATE POLICY "Allow public donor registration"
+  ON public.donors
+  FOR INSERT
+  TO anon, authenticated
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public donor lookup" ON public.donors;
+CREATE POLICY "Allow public donor lookup"
+  ON public.donors
+  FOR SELECT
+  TO anon, authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow donor updates" ON public.donors;
+CREATE POLICY "Allow donor updates"
+  ON public.donors
+  FOR UPDATE
+  TO anon, authenticated
+  USING (true);
+
+-- 5. blood_requests: Allow public read, create, and update
+DROP POLICY IF EXISTS "Allow blood requests access" ON public.blood_requests;
+CREATE POLICY "Allow blood requests access"
+  ON public.blood_requests
+  FOR ALL
+  TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+-- 6. notifications & responses: Allow alerts and response submission
+DROP POLICY IF EXISTS "Allow notifications access" ON public.notifications;
+CREATE POLICY "Allow notifications access"
+  ON public.notifications
+  FOR ALL
+  TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow donor responses access" ON public.donor_responses;
+CREATE POLICY "Allow donor responses access"
+  ON public.donor_responses
+  FOR ALL
+  TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+-- 7. audit_logs: Allow logging actions
+DROP POLICY IF EXISTS "Allow audit log access" ON public.audit_logs;
+CREATE POLICY "Allow audit log access"
+  ON public.audit_logs
+  FOR ALL
+  TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+

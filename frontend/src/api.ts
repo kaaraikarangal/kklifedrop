@@ -818,6 +818,40 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       throw new Error("Access Denied: Email and password are required.");
     }
 
+    // 1. First attempt via secure Edge Function (Zero password hash exposure)
+    try {
+      const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
+        body: { action: "login", email, password },
+      });
+
+      if (!edgeErr && edgeRes && edgeRes.ok && edgeRes.token) {
+        await setSession(edgeRes.token, "admin");
+        await AsyncStorage.setItem(ADMIN_USER_KEY, JSON.stringify(edgeRes.admin));
+        return {
+          ok: true,
+          token: edgeRes.token,
+          user: edgeRes.admin,
+          admin: edgeRes.admin,
+        } as unknown as T;
+      }
+
+      if (edgeErr) {
+        let msg = edgeErr.message;
+        try {
+          const errBody = await (edgeErr as any).context?.json?.();
+          if (errBody?.error) msg = errBody.error;
+        } catch {}
+        if (msg && (msg.includes("Invalid administrator") || msg.includes("suspended") || msg.includes("Access Denied"))) {
+          throw new Error(msg);
+        }
+      }
+    } catch (e: any) {
+      if (e?.message && (e.message.includes("Invalid administrator") || e.message.includes("suspended"))) {
+        throw e;
+      }
+    }
+
+    // 2. Direct fallback (if Edge Function not reachable)
     const { data: admins, error: adminErr } = await supabase
       .from("admin_users")
       .select("*")
@@ -867,6 +901,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       role: adminRole,
       is_super_admin: isSuperAdmin,
       user: adminUser,
+      admin: adminUser,
     } as unknown as T;
   }
 
@@ -2116,6 +2151,24 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     // GET: List all admins
     if (method === "GET") {
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
+          body: { action: "list_sub_admins" },
+        });
+        if (!edgeErr && edgeRes?.ok && edgeRes.sub_admins) {
+          const enriched = edgeRes.sub_admins.map((a: any) => {
+            const isSuper = a.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+            return {
+              ...a,
+              role: isSuper ? "super_admin" : "sub_admin",
+              role_label: isSuper ? "Super Admin" : "Sub-Admin",
+              is_super_admin: isSuper,
+            };
+          });
+          return { ok: true, admins: enriched, is_super_admin: isSuperAdmin } as unknown as T;
+        }
+      } catch {}
+
       const { data: adminsList, error: admErr } = await supabase
         .from("admin_users")
         .select("id, name, email, status, created_at")
@@ -2149,6 +2202,34 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (!name) throw new Error("Please enter sub-admin's full name");
       if (!email || !email.includes("@")) throw new Error("Please enter a valid email address");
       if (password.length < 6) throw new Error("Password must be at least 6 characters");
+
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
+          body: { action: "create_sub_admin", name, email, password, admin_email: currentAdmin?.email },
+        });
+        if (!edgeErr && edgeRes?.ok) {
+          return {
+            ok: true,
+            message: "Sub-Admin created successfully",
+            admin: {
+              ...edgeRes.admin,
+              role: "sub_admin",
+              role_label: "Sub-Admin",
+              is_super_admin: false,
+            },
+          } as unknown as T;
+        }
+        if (edgeErr) {
+          let msg = edgeErr.message;
+          try {
+            const errBody = await (edgeErr as any).context?.json?.();
+            if (errBody?.error) msg = errBody.error;
+          } catch {}
+          if (msg) throw new Error(msg);
+        }
+      } catch (e: any) {
+        if (e?.message && e.message.includes("already exists")) throw e;
+      }
 
       // Check if email already registered
       const { data: existing } = await supabase
@@ -2210,6 +2291,27 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const targetId = body.admin_id || body.id;
       if (!targetId) throw new Error("Admin ID is required");
 
+      const newStatus = body.status || "suspended";
+
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
+          body: { action: "update_status", target_id: targetId, status: newStatus, admin_email: currentAdmin?.email },
+        });
+        if (!edgeErr && edgeRes?.ok) {
+          return { ok: true, status: newStatus, message: `Admin status set to ${newStatus}` } as unknown as T;
+        }
+        if (edgeErr) {
+          let msg = edgeErr.message;
+          try {
+            const errBody = await (edgeErr as any).context?.json?.();
+            if (errBody?.error) msg = errBody.error;
+          } catch {}
+          if (msg) throw new Error(msg);
+        }
+      } catch (e: any) {
+        if (e?.message && e.message.includes("Forbidden")) throw e;
+      }
+
       const { data: target } = await supabase
         .from("admin_users")
         .select("id, email, status, name")
@@ -2221,7 +2323,6 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         throw new Error("Action Forbidden: Super Admin account cannot be suspended.");
       }
 
-      const newStatus = body.status || (target.status === "active" ? "suspended" : "active");
       await supabase.from("admin_users").update({ status: newStatus }).eq("id", targetId);
 
       await supabase.from("audit_logs").insert({
@@ -2249,6 +2350,25 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
       const targetId = body.admin_id || body.id || queryParams.get("id");
       if (!targetId) throw new Error("Admin ID is required");
+
+      try {
+        const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
+          body: { action: "delete_sub_admin", target_id: targetId, admin_email: currentAdmin?.email },
+        });
+        if (!edgeErr && edgeRes?.ok) {
+          return { ok: true, message: "Sub-Admin deleted successfully" } as unknown as T;
+        }
+        if (edgeErr) {
+          let msg = edgeErr.message;
+          try {
+            const errBody = await (edgeErr as any).context?.json?.();
+            if (errBody?.error) msg = errBody.error;
+          } catch {}
+          if (msg) throw new Error(msg);
+        }
+      } catch (e: any) {
+        if (e?.message && e.message.includes("Forbidden")) throw e;
+      }
 
       const { data: target } = await supabase
         .from("admin_users")
