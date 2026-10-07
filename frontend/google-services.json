@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1087213542244",
+    "project_id": "kklifedrop",
+    "storage_bucket": "kklifedrop.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1087213542244:android:35124212641c0366527871",
+        "android_client_info": {
+          "package_name": "org.kaaraikarangal.kklifedrop"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDzWCeI8hU7BODWCn_KZLEwIpobtoJJRfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
