@@ -21,6 +21,8 @@ export const LEGACY_ROLE_KEY = "k2_role";
 export const LEGACY_DONOR_KEY = "k2_donor";
 export const LEGACY_MOBILE_KEY = "k2_mobile";
 export const LEGACY_ADMIN_USER_KEY = "k2_admin_user";
+export const PUSH_TOKEN_KEY = "kk_push_token";
+export const LEGACY_PUSH_TOKEN_KEY = "k2_push_token";
 
 export const ORG_CONTACT = {
   name: "Kaarai Karangal Social Service Organization",
@@ -760,6 +762,15 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     await setSession(sessionToken, "user", cleanMobile);
     if (donorDoc) {
       await AsyncStorage.setItem(DONOR_KEY, JSON.stringify(toPublicDonor(donorDoc)));
+      const cachedPushToken =
+        (await AsyncStorage.getItem(PUSH_TOKEN_KEY)) ||
+        (await AsyncStorage.getItem(LEGACY_PUSH_TOKEN_KEY));
+      if (cachedPushToken) {
+        await supabase
+          .from("donors")
+          .update({ push_token: cachedPushToken })
+          .eq("id", donorDoc.id);
+      }
     }
 
     await recordAuditLog({
@@ -888,6 +899,12 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const aadhaarRaw = (body.aadhaar_number || "").replace(/\D/g, "");
       const masked = aadhaarRaw.length >= 4 ? `XXXX XXXX ${aadhaarRaw.slice(-4)}` : "XXXX XXXX 0000";
 
+      const cachedPushToken =
+        (await AsyncStorage.getItem(PUSH_TOKEN_KEY)) ||
+        (await AsyncStorage.getItem(LEGACY_PUSH_TOKEN_KEY)) ||
+        body.push_token ||
+        null;
+
       const insertData = {
         full_name: body.full_name,
         gender: body.gender,
@@ -906,6 +923,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         donation_opt_in: true,
         last_donation_date: body.last_donation_date || null,
         status: "active",
+        push_token: cachedPushToken,
       };
 
       const { data, error } = await supabase.from("donors").upsert(insertData, { onConflict: "mobile" }).select().single();
