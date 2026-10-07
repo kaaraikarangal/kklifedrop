@@ -20,7 +20,7 @@ export default function RequestBlood() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [f, setF] = useState<any>({
-    patient_name: "", blood_group: "B+", units_required: "2",
+    patient_name: "", blood_group: "B+", units_required: "1",
     hospital_name: "", hospital_area: "", hospital_city: "",
     required_date: new Date().toISOString().slice(0, 10), required_time: "", urgency: "Normal",
     requester_name: "", requester_mobile: "", requester_email: "", relationship: "Father",

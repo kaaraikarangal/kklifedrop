@@ -27,10 +27,12 @@ export default function Register() {
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
 
   async function submit() {
-    const required = ["full_name", "email", "area", "place", "district", "state", "pincode", "aadhaar"];
+    const required = ["full_name", "email", "area", "place", "district", "state", "pincode"];
     for (const k of required) if (!f[k]?.trim()) return toast("error", "Missing", `Please fill ${k.replace(/_/g, " ")}`);
     if (!f.consent) return toast("error", "Consent required", "Please accept the privacy policy");
-    if (f.aadhaar.replace(/\D/g, "").length !== 12) return toast("error", "Invalid Aadhaar", "Aadhaar must be 12 digits");
+    if (f.aadhaar?.trim() && f.aadhaar.replace(/\D/g, "").length !== 12) {
+      return toast("error", "Invalid Aadhaar", "If provided, Aadhaar must be 12 digits");
+    }
 
     setLoading(true);
     try {
@@ -87,7 +89,7 @@ export default function Register() {
         <Section title="Identification" />
         <Input
           testID="aadhaar-input"
-          label="Aadhaar Number (12 digits — encrypted at rest)"
+          label="Aadhaar Number (Optional — 12 digits, encrypted at rest)"
           value={f.aadhaar}
           onChangeText={(v) => set("aadhaar", v.replace(/\D/g, "").slice(0, 12))}
           keyboardType="number-pad"

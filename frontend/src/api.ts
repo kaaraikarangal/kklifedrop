@@ -896,8 +896,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         .replace(/\D/g, "")
         .slice(-10);
 
-      const aadhaarRaw = (body.aadhaar_number || "").replace(/\D/g, "");
-      const masked = aadhaarRaw.length >= 4 ? `XXXX XXXX ${aadhaarRaw.slice(-4)}` : "XXXX XXXX 0000";
+      const aadhaarRaw = (body.aadhaar || body.aadhaar_number || "").replace(/\D/g, "");
+      const masked = aadhaarRaw.length >= 4 ? `XXXX XXXX ${aadhaarRaw.slice(-4)}` : null;
 
       const cachedPushToken =
         (await AsyncStorage.getItem(PUSH_TOKEN_KEY)) ||
@@ -917,7 +917,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         district: body.district,
         state: body.state || "Puducherry",
         pincode: body.pincode,
-        encrypted_aadhaar: `ENCR_${aadhaarRaw || "NONE"}`,
+        encrypted_aadhaar: aadhaarRaw ? `ENCR_${aadhaarRaw}` : null,
         masked_aadhaar: masked,
         availability: "Available",
         donation_opt_in: true,
