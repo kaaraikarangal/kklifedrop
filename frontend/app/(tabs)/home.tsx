@@ -61,7 +61,7 @@ export default function Home() {
     try {
       const [sRes, rRes] = await Promise.allSettled([
         api("/stats") as Promise<any>,
-        api("/blood-requests?limit=4") as Promise<any>,
+        api("/blood-requests?limit=10&exclude_closed=true") as Promise<any>,
       ]);
 
       if (sRes.status === "fulfilled" && sRes.value) {
@@ -113,7 +113,10 @@ export default function Home() {
     setRefreshing(false);
   };
 
-  const emergency = requests.find((r) => r.urgency === "Emergency");
+  const CLOSED_STATUSES = ["Fulfilled", "Cancelled", "Expired"];
+  const emergency = requests.find(
+    (r) => r.urgency === "Emergency" && !CLOSED_STATUSES.includes(r.status)
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>

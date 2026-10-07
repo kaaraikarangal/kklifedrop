@@ -1264,6 +1264,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const status = queryParams.get("status");
       if (status) q = q.eq("status", status);
 
+      const excludeClosed = queryParams.get("exclude_closed") === "true";
+      if (excludeClosed) {
+        q = q.not("status", "in", '("Fulfilled","Cancelled","Expired")');
+      }
+
       const limit = parseInt(queryParams.get("limit") || "100", 10);
       const { data, error } = await q.order("created_at", { ascending: false }).limit(limit);
 
