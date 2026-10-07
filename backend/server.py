@@ -1339,10 +1339,11 @@ async def notifications_for_me(user: dict = Depends(current_user)):
 
 @api.get("/admin/notifications")
 async def admin_notifications(admin: dict = Depends(current_admin)):
-    n = await sb.table("notifications").select("*").order("sent_at", desc=True).limit(500).execute()
+    n = await sb.table("notifications").select("*, donors(id, full_name, mobile, blood_group, district, area)").order("sent_at", desc=True).limit(500).execute()
     groups: dict = {}
     for item in n.data:
-        g = groups.setdefault(item["request_id"], {"notified": 0, "responded": 0, "can_donate": 0, "last_sent": None})
+        rid = item["request_id"]
+        g = groups.setdefault(rid, {"notified": 0, "responded": 0, "can_donate": 0, "last_sent": None, "donors": []})
         g["notified"] += 1
         if item.get("response"):
             g["responded"] += 1
@@ -1350,13 +1351,62 @@ async def admin_notifications(admin: dict = Depends(current_admin)):
                 g["can_donate"] += 1
         if not g["last_sent"] or item["sent_at"] > g["last_sent"]:
             g["last_sent"] = item["sent_at"]
+        d = item.get("donors") or {}
+        g["donors"].append({
+            "id": item.get("donor_id"),
+            "name": d.get("full_name") or "Verified Donor",
+            "mobile": d.get("mobile") or item.get("donor_mobile") or "",
+            "blood_group": d.get("blood_group") or "",
+            "area": d.get("area") or d.get("district") or "Karaikal",
+            "response": item.get("response"),
+            "responded_at": item.get("responded_at"),
+            "sent_at": item.get("sent_at"),
+        })
+
+    # Also include donor_responses if any exist
+    try:
+        resp_q = await sb.table("donor_responses").select("*, donors(id, full_name, mobile, blood_group, district, area)").execute()
+        for resp in resp_q.data or []:
+            rid = resp.get("request_id")
+            if not rid:
+                continue
+            g = groups.setdefault(rid, {"notified": 0, "responded": 0, "can_donate": 0, "last_sent": resp.get("responded_at"), "donors": []})
+            existing = next((x for x in g["donors"] if x.get("id") == resp.get("donor_id")), None)
+            if existing:
+                if not existing.get("response"):
+                    existing["response"] = resp.get("response")
+                    existing["responded_at"] = resp.get("responded_at")
+                    g["responded"] += 1
+                    if resp.get("response") == "I Can Donate":
+                        g["can_donate"] += 1
+            else:
+                d = resp.get("donors") or {}
+                g["donors"].append({
+                    "id": resp.get("donor_id"),
+                    "name": d.get("full_name") or "Verified Donor",
+                    "mobile": d.get("mobile") or "",
+                    "blood_group": d.get("blood_group") or "",
+                    "area": d.get("area") or d.get("district") or "Karaikal",
+                    "response": resp.get("response"),
+                    "responded_at": resp.get("responded_at"),
+                    "sent_at": None,
+                })
+                g["notified"] += 1
+                g["responded"] += 1
+                if resp.get("response") == "I Can Donate":
+                    g["can_donate"] += 1
+    except Exception:
+        pass
+
     out = []
     for rid, g in groups.items():
-        rq = await sb.table("blood_requests").select("request_number,blood_group,urgency,status").eq("id", rid).execute()
+        rq = await sb.table("blood_requests").select("request_number,blood_group,urgency,status,patient_name,hospital_name").eq("id", rid).execute()
         req = rq.data[0] if rq.data else {}
         out.append({
             "request_id": rid,
             "request_number": req.get("request_number"),
+            "patient_name": req.get("patient_name") or "",
+            "hospital_name": req.get("hospital_name") or "",
             "blood_group": req.get("blood_group"),
             "urgency": req.get("urgency"),
             "notified": g["notified"],
@@ -1364,6 +1414,7 @@ async def admin_notifications(admin: dict = Depends(current_admin)):
             "can_donate": g["can_donate"],
             "last_sent": g["last_sent"],
             "status": req.get("status"),
+            "donors": g["donors"],
         })
     out.sort(key=lambda x: x.get("last_sent") or "", reverse=True)
     return {"groups": out}

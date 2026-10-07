@@ -293,6 +293,7 @@ export default function AdminHome() {
   const [donors, setDonors] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
   const [notifs, setNotifs] = useState<any[]>([]);
+  const [expandedNotifId, setExpandedNotifId] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -1754,77 +1755,290 @@ export default function AdminHome() {
               <Text style={styles.emptyDesc}>When you notify matching donors from a blood request, summary logs appear here.</Text>
             </View>
           }
-          renderItem={({ item: g }) => (
-            <View style={styles.broadcastCard}>
-              <View style={styles.broadcastCardTop}>
-                <BloodGroupBadge group={g.blood_group} size="md" />
-                <View style={{ flex: 1, marginLeft: 14 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={styles.broadcastTitle}>{g.patient_name ? `${g.patient_name} (${g.blood_group})` : g.request_number}</Text>
-                    <View style={[styles.statusBadgePill, getReqStatusStyle(g.status)]}>
-                      <Text style={[styles.statusBadgePillText, getReqStatusTextStyle(g.status)]}>{g.status}</Text>
+          renderItem={({ item: g }) => {
+            const respondedDonors = (g.donors || []).filter((d: any) => Boolean(d.response));
+            const isExpanded = expandedNotifId === g.request_id;
+            const reqObj = requests.find((r) => r.id === g.request_id || r.request_number === g.request_number);
+
+            return (
+              <View style={styles.broadcastCard}>
+                <View style={styles.broadcastCardTop}>
+                  <BloodGroupBadge group={g.blood_group} size="md" />
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={styles.broadcastTitle}>{g.patient_name ? `${g.patient_name} (${g.blood_group})` : g.request_number}</Text>
+                      <View style={[styles.statusBadgePill, getReqStatusStyle(g.status)]}>
+                        <Text style={[styles.statusBadgePillText, getReqStatusTextStyle(g.status)]}>{g.status}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.broadcastMeta}>
+                      ID: <Text style={{ fontWeight: "700", color: "#0F172A" }}>{g.request_number}</Text> • Urgency: <Text style={{ fontWeight: "700", color: g.urgency === "Emergency" ? colors.brandRed : "#0F172A" }}>{g.urgency}</Text>
+                    </Text>
+                  </View>
+                </View>
+
+                {/* STATS ROW (CLICKABLE TO EXPAND) */}
+                <View style={styles.broadcastStatsRow}>
+                  <Pressable
+                    style={styles.bStatCol}
+                    onPress={() => setExpandedNotifId(isExpanded ? null : g.request_id)}
+                  >
+                    <Text style={styles.bStatNum}>{g.notified}</Text>
+                    <Text style={styles.bStatLabel}>Notified</Text>
+                  </Pressable>
+                  <View style={styles.bStatDivider} />
+                  <Pressable
+                    style={[styles.bStatCol, respondedDonors.length > 0 && styles.bStatColHighlight]}
+                    onPress={() => setExpandedNotifId(isExpanded ? null : g.request_id)}
+                  >
+                    <Text style={[styles.bStatNum, respondedDonors.length > 0 && { color: colors.brandBlue }]}>
+                      {g.responded}
+                    </Text>
+                    <Text style={styles.bStatLabel}>Responded</Text>
+                  </Pressable>
+                  <View style={styles.bStatDivider} />
+                  <Pressable
+                    style={[styles.bStatCol, g.can_donate > 0 && styles.bStatColHighlightGreen]}
+                    onPress={() => setExpandedNotifId(isExpanded ? null : g.request_id)}
+                  >
+                    <Text style={[styles.bStatNum, { color: colors.brandGreen }]}>{g.can_donate}</Text>
+                    <Text style={styles.bStatLabel}>Can Donate</Text>
+                  </Pressable>
+                </View>
+
+                {/* WHO RESPONDED TOGGLE BANNER */}
+                <Pressable
+                  testID={`toggle-responders-${g.request_id}`}
+                  style={[
+                    styles.btnViewResponders,
+                    respondedDonors.length > 0 ? styles.btnViewRespondersActive : styles.btnViewRespondersMuted,
+                  ]}
+                  onPress={() => setExpandedNotifId(isExpanded ? null : g.request_id)}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                    <View style={[
+                      styles.viewRespondersIconWrap,
+                      respondedDonors.length > 0 ? { backgroundColor: "#DCFCE7" } : { backgroundColor: "#F1F5F9" }
+                    ]}>
+                      <Ionicons
+                        name={respondedDonors.length > 0 ? "checkmark-circle" : "people-outline"}
+                        size={18}
+                        color={respondedDonors.length > 0 ? colors.brandGreen : "#64748B"}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[
+                        styles.btnViewRespondersTitle,
+                        respondedDonors.length > 0 && { color: "#166534" },
+                      ]}>
+                        {respondedDonors.length > 0
+                          ? `Who Responded: ${respondedDonors.length} Donor${respondedDonors.length > 1 ? "s" : ""} (${g.can_donate} Can Donate)`
+                          : `View Alerted Donors (${(g.donors || []).length})`}
+                      </Text>
+                      <Text style={styles.btnViewRespondersSubtitle}>
+                        {respondedDonors.length > 0
+                          ? "Tap to see who responded, view mobile & call/WhatsApp"
+                          : "No responses received yet. Tap to see alerted donors"}
+                      </Text>
                     </View>
                   </View>
-                  <Text style={styles.broadcastMeta}>
-                    ID: <Text style={{ fontWeight: "700", color: "#0F172A" }}>{g.request_number}</Text> • Urgency: <Text style={{ fontWeight: "700", color: g.urgency === "Emergency" ? colors.brandRed : "#0F172A" }}>{g.urgency}</Text>
+                  <Ionicons
+                    name={isExpanded ? "chevron-up" : "chevron-down"}
+                    size={18}
+                    color={respondedDonors.length > 0 ? "#166534" : "#64748B"}
+                  />
+                </Pressable>
+
+                {/* EXPANDED DONOR LIST */}
+                {isExpanded && (
+                  <View style={styles.expandedRespondersContainer}>
+                    <View style={styles.expandedRespondersHeader}>
+                      <Text style={styles.expandedRespondersTitle}>
+                        {respondedDonors.length > 0
+                          ? `Responded Donors (${respondedDonors.length})`
+                          : `Alerted Donors (${(g.donors || []).length})`}
+                      </Text>
+                      {respondedDonors.length > 0 && g.can_donate > 0 && (
+                        <View style={styles.canDonateHeaderBadge}>
+                          <Ionicons name="heart" size={11} color="#15803D" />
+                          <Text style={styles.canDonateHeaderBadgeText}>{g.can_donate} Ready to Donate</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {(respondedDonors.length > 0 ? respondedDonors : (g.donors || [])).length === 0 ? (
+                      <View style={styles.noRespondersBox}>
+                        <Ionicons name="information-circle-outline" size={24} color="#94A3B8" />
+                        <Text style={styles.noRespondersText}>No donors tracked for this broadcast yet.</Text>
+                      </View>
+                    ) : (
+                      (respondedDonors.length > 0 ? respondedDonors : (g.donors || [])).map((d: any, idx: number) => {
+                        const cleanPhone = (d.mobile || "").replace(/\D/g, "").slice(-10);
+                        const isCanDonate = d.response === "I Can Donate" || d.response === "accepted" || d.response === "can_donate";
+                        const isDeclined = d.response === "declined" || d.response === "rejected" || d.response === "Unavailable";
+
+                        return (
+                          <View key={d.id || `d-${idx}`} style={styles.responderCard}>
+                            <View style={styles.responderCardTop}>
+                              <View style={[
+                                styles.responderAvatar,
+                                isCanDonate ? { backgroundColor: "#DCFCE7" } : { backgroundColor: "#EFF6FF" }
+                              ]}>
+                                <Text style={[
+                                  styles.responderAvatarText,
+                                  isCanDonate ? { color: "#15803D" } : { color: colors.brandBlue }
+                                ]}>
+                                  {(d.name || "D").slice(0, 2).toUpperCase()}
+                                </Text>
+                              </View>
+                              <View style={{ flex: 1, marginLeft: 10 }}>
+                                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                                  <Text style={styles.responderName}>{d.name || "Verified Donor"}</Text>
+                                  <BloodGroupBadge group={d.blood_group || g.blood_group} size="sm" />
+                                </View>
+                                <View style={styles.responderLocationRow}>
+                                  <Ionicons name="location-outline" size={12} color="#64748B" />
+                                  <Text style={styles.responderLocationText}>{d.area || d.district || "Karaikal"}</Text>
+                                  {cleanPhone ? (
+                                    <>
+                                      <Text style={{ color: "#CBD5E1" }}>•</Text>
+                                      <Text style={styles.responderPhoneText}>+91 {cleanPhone}</Text>
+                                    </>
+                                  ) : null}
+                                </View>
+                              </View>
+                            </View>
+
+                            {/* Response Status Pill & Timestamp */}
+                            <View style={styles.responderStatusRow}>
+                              {d.response ? (
+                                <View style={[
+                                  styles.responseStatusPill,
+                                  isCanDonate ? styles.responsePillGreen : isDeclined ? styles.responsePillRed : styles.responsePillBlue,
+                                ]}>
+                                  <Ionicons
+                                    name={isCanDonate ? "checkmark-circle" : isDeclined ? "close-circle" : "chatbubble-ellipses"}
+                                    size={13}
+                                    color={isCanDonate ? "#15803D" : isDeclined ? "#B91C1C" : colors.brandBlue}
+                                  />
+                                  <Text style={[
+                                    styles.responseStatusPillText,
+                                    isCanDonate ? styles.responseTextGreen : isDeclined ? styles.responseTextRed : styles.responseTextBlue,
+                                  ]}>
+                                    {d.response}
+                                  </Text>
+                                </View>
+                              ) : (
+                                <View style={[styles.responseStatusPill, styles.responsePillGray]}>
+                                  <Ionicons name="time-outline" size={13} color="#64748B" />
+                                  <Text style={[styles.responseStatusPillText, styles.responseTextGray]}>
+                                    Awaiting Response
+                                  </Text>
+                                </View>
+                              )}
+
+                              <Text style={styles.responderTimeText}>
+                                {d.responded_at
+                                  ? `Responded ${new Date(d.responded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                                  : d.sent_at
+                                  ? `Alerted ${new Date(d.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                                  : ""}
+                              </Text>
+                            </View>
+
+                            {/* Action Buttons for this responder */}
+                            <View style={styles.responderActionsRow}>
+                              {cleanPhone ? (
+                                <>
+                                  <Pressable
+                                    style={styles.responderBtnCall}
+                                    onPress={() => Linking.openURL(`tel:+91${cleanPhone}`).catch(() => toast("error", "Cannot make call", "Check device dialer"))}
+                                  >
+                                    <Ionicons name="call" size={13} color="#FFFFFF" />
+                                    <Text style={styles.responderBtnCallText}>Call</Text>
+                                  </Pressable>
+
+                                  <Pressable
+                                    style={styles.responderBtnWhatsApp}
+                                    onPress={() => {
+                                      const waMsg = encodeURIComponent(
+                                        `Hello ${d.name || "Donor"}, this is KK Life Drop Blood Support regarding the blood request for ${g.patient_name || g.request_number} (${g.blood_group}) at ${g.hospital_name || "Hospital"}. Thank you for responding! Can you donate?`
+                                      );
+                                      Linking.openURL(`https://wa.me/91${cleanPhone}?text=${waMsg}`).catch(() => toast("error", "WhatsApp failed", "Cannot open WhatsApp"));
+                                    }}
+                                  >
+                                    <Ionicons name="logo-whatsapp" size={13} color="#FFFFFF" />
+                                    <Text style={styles.responderBtnWhatsAppText}>WhatsApp</Text>
+                                  </Pressable>
+                                </>
+                              ) : null}
+
+                              {reqObj && reqObj.status !== "Fulfilled" && isCanDonate ? (
+                                <Pressable
+                                  style={styles.responderBtnFulfill}
+                                  onPress={() => {
+                                    Alert.alert(
+                                      "Confirm Fulfillment",
+                                      `Mark request ${reqObj.request_number} as Fulfilled with donor ${d.name}?`,
+                                      [
+                                        { text: "Cancel", style: "cancel" },
+                                        {
+                                          text: "Yes, Mark Fulfilled",
+                                          onPress: () => updateStatus(reqObj, "Fulfilled"),
+                                        },
+                                      ]
+                                    );
+                                  }}
+                                >
+                                  <Ionicons name="checkmark-done" size={13} color="#047857" />
+                                  <Text style={styles.responderBtnFulfillText}>Fulfill</Text>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                          </View>
+                        );
+                      })
+                    )}
+                  </View>
+                )}
+
+                <View style={styles.broadcastFooter}>
+                  <Ionicons name="time-outline" size={12} color="#64748B" />
+                  <Text style={styles.broadcastFooterText}>
+                    Last Alert Sent: {g.last_sent ? new Date(g.last_sent).toLocaleString() : "—"}
                   </Text>
                 </View>
-              </View>
 
-              <View style={styles.broadcastStatsRow}>
-                <View style={styles.bStatCol}>
-                  <Text style={styles.bStatNum}>{g.notified}</Text>
-                  <Text style={styles.bStatLabel}>Notified</Text>
+                {/* REMINDER & ACTION BUTTONS */}
+                <View style={styles.broadcastActionRow}>
+                  <Pressable
+                    testID={`remind-broadcast-${g.request_id}`}
+                    style={styles.btnRemindBroadcast}
+                    onPress={() => sendBroadcastReminder(g)}
+                    disabled={loading}
+                  >
+                    <Ionicons name="notifications" size={13} color="#FFFFFF" />
+                    <Text style={styles.btnRemindBroadcastText}>Send Reminder (Notify Again)</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.btnOpenRequestMatching}
+                    onPress={() => {
+                      if (reqObj) {
+                        openMatching(reqObj);
+                      } else {
+                        setView("requests");
+                        setRequestSearch(g.request_number || "");
+                      }
+                    }}
+                  >
+                    <Ionicons name="people" size={13} color={colors.brandBlue} />
+                    <Text style={styles.btnOpenRequestMatchingText}>Pick Donors by Name</Text>
+                  </Pressable>
                 </View>
-                <View style={styles.bStatDivider} />
-                <View style={styles.bStatCol}>
-                  <Text style={styles.bStatNum}>{g.responded}</Text>
-                  <Text style={styles.bStatLabel}>Responded</Text>
-                </View>
-                <View style={styles.bStatDivider} />
-                <View style={styles.bStatCol}>
-                  <Text style={[styles.bStatNum, { color: colors.brandGreen }]}>{g.can_donate}</Text>
-                  <Text style={styles.bStatLabel}>Can Donate</Text>
-                </View>
               </View>
-
-              <View style={styles.broadcastFooter}>
-                <Ionicons name="time-outline" size={12} color="#64748B" />
-                <Text style={styles.broadcastFooterText}>
-                  Last Alert Sent: {g.last_sent ? new Date(g.last_sent).toLocaleString() : "—"}
-                </Text>
-              </View>
-
-              {/* REMINDER & ACTION BUTTONS */}
-              <View style={styles.broadcastActionRow}>
-                <Pressable
-                  testID={`remind-broadcast-${g.request_id}`}
-                  style={styles.btnRemindBroadcast}
-                  onPress={() => sendBroadcastReminder(g)}
-                  disabled={loading}
-                >
-                  <Ionicons name="notifications" size={13} color="#FFFFFF" />
-                  <Text style={styles.btnRemindBroadcastText}>Send Reminder (Notify Again)</Text>
-                </Pressable>
-
-                <Pressable
-                  style={styles.btnOpenRequestMatching}
-                  onPress={() => {
-                    const reqObj = requests.find((r) => r.id === g.request_id || r.request_number === g.request_number);
-                    if (reqObj) {
-                      openMatching(reqObj);
-                    } else {
-                      setView("requests");
-                      setRequestSearch(g.request_number || "");
-                    }
-                  }}
-                >
-                  <Ionicons name="people" size={13} color={colors.brandBlue} />
-                  <Text style={styles.btnOpenRequestMatchingText}>Pick Donors by Name</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
+            );
+          }}
         />
       )}
 
@@ -4227,6 +4441,252 @@ const styles = StyleSheet.create({
     color: colors.brandBlue,
     fontSize: 11,
     fontWeight: "700",
+  },
+  bStatColHighlight: {
+    backgroundColor: "#EFF6FF",
+    borderRadius: radius.md,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  bStatColHighlightGreen: {
+    backgroundColor: "#F0FDF4",
+    borderRadius: radius.md,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  btnViewResponders: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    marginBottom: 10,
+    borderWidth: 1,
+  },
+  btnViewRespondersActive: {
+    backgroundColor: "#F0FDF4",
+    borderColor: "#BBF7D0",
+  },
+  btnViewRespondersMuted: {
+    backgroundColor: "#F8FAFC",
+    borderColor: "#E2E8F0",
+  },
+  viewRespondersIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnViewRespondersTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  btnViewRespondersSubtitle: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  expandedRespondersContainer: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  expandedRespondersHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  expandedRespondersTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  canDonateHeaderBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#DCFCE7",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  canDonateHeaderBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#15803D",
+  },
+  noRespondersBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 20,
+    gap: 6,
+  },
+  noRespondersText: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  responderCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  responderCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  responderAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  responderAvatarText: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  responderName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  responderLocationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+  },
+  responderLocationText: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  responderPhoneText: {
+    fontSize: 12,
+    color: "#1E293B",
+    fontWeight: "600",
+  },
+  responderStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  responseStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  responsePillGreen: {
+    backgroundColor: "#DCFCE7",
+  },
+  responsePillRed: {
+    backgroundColor: "#FEE2E2",
+  },
+  responsePillBlue: {
+    backgroundColor: "#EFF6FF",
+  },
+  responsePillGray: {
+    backgroundColor: "#F1F5F9",
+  },
+  responseStatusPillText: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  responseTextGreen: {
+    color: "#15803D",
+  },
+  responseTextRed: {
+    color: "#B91C1C",
+  },
+  responseTextBlue: {
+    color: "#1D4ED8",
+  },
+  responseTextGray: {
+    color: "#64748B",
+  },
+  responderTimeText: {
+    fontSize: 11,
+    color: "#94A3B8",
+    fontWeight: "500",
+  },
+  responderActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+  responderBtnCall: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#2563EB",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  responderBtnCallText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  responderBtnWhatsApp: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#16A34A",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  responderBtnWhatsAppText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  responderBtnFulfill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    marginLeft: "auto",
+  },
+  responderBtnFulfillText: {
+    color: "#047857",
+    fontSize: 11,
+    fontWeight: "800",
   },
 
   historyHead: {

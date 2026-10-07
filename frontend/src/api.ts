@@ -1898,8 +1898,15 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     await requireAdminAuth();
     const { data } = await supabase
       .from("notifications")
-      .select("*, blood_requests(*)")
+      .select("*, blood_requests(*), donors(id, full_name, mobile, blood_group, district, area)")
       .order("sent_at", { ascending: false })
+      .limit(500);
+
+    // Also fetch donor_responses to guarantee all responses are captured even if notifications table was cleared
+    const { data: responsesData } = await supabase
+      .from("donor_responses")
+      .select("*, donors(id, full_name, mobile, blood_group, district, area)")
+      .order("responded_at", { ascending: false })
       .limit(500);
 
     const rawList = data || [];
@@ -1921,19 +1928,93 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           responded: 0,
           can_donate: 0,
           last_sent: item.sent_at || null,
+          donors: [],
         };
       }
 
       const g = groupsMap[rid];
-      g.notified += 1;
-      if (item.response) {
-        g.responded += 1;
-        if (item.response === "I Can Donate") {
-          g.can_donate += 1;
-        }
-      }
       if (!g.last_sent || (item.sent_at && item.sent_at > g.last_sent)) {
         g.last_sent = item.sent_at;
+      }
+
+      const d = item.donors || {};
+      let existing = g.donors.find((x: any) => x.id === item.donor_id);
+      if (!existing) {
+        g.notified += 1;
+        existing = {
+          id: item.donor_id,
+          name: d.full_name || "Verified Donor",
+          mobile: d.mobile || item.donor_mobile || "",
+          blood_group: d.blood_group || g.blood_group,
+          area: d.area || d.district || "Karaikal",
+          response: item.response || null,
+          responded_at: item.responded_at || null,
+          sent_at: item.sent_at || null,
+        };
+        g.donors.push(existing);
+        if (item.response) {
+          g.responded += 1;
+          if (item.response === "I Can Donate") {
+            g.can_donate += 1;
+          }
+        }
+      } else {
+        if (!existing.response && item.response) {
+          existing.response = item.response;
+          existing.responded_at = item.responded_at;
+          g.responded += 1;
+          if (item.response === "I Can Donate") {
+            g.can_donate += 1;
+          }
+        }
+      }
+    }
+
+    // Merge any responses from donor_responses table
+    for (const resp of (responsesData || [])) {
+      const rid = resp.request_id;
+      if (!rid) continue;
+      if (!groupsMap[rid]) {
+        groupsMap[rid] = {
+          request_id: rid,
+          request_number: "Broadcast Alert",
+          blood_group: resp.donors?.blood_group || "—",
+          urgency: "Normal",
+          status: "Donors Notified",
+          patient_name: "",
+          hospital_name: "",
+          notified: 0,
+          responded: 0,
+          can_donate: 0,
+          last_sent: resp.responded_at || null,
+          donors: [],
+        };
+      }
+
+      const g = groupsMap[rid];
+      const existingDonor = g.donors.find((d: any) => d.id === resp.donor_id);
+      if (existingDonor) {
+        if (!existingDonor.response) {
+          existingDonor.response = resp.response;
+          existingDonor.responded_at = resp.responded_at;
+          g.responded += 1;
+          if (resp.response === "I Can Donate") g.can_donate += 1;
+        }
+      } else {
+        const d = resp.donors || {};
+        g.donors.push({
+          id: resp.donor_id,
+          name: d.full_name || "Verified Donor",
+          mobile: d.mobile || "",
+          blood_group: d.blood_group || g.blood_group,
+          area: d.area || d.district || "Karaikal",
+          response: resp.response || null,
+          responded_at: resp.responded_at || null,
+          sent_at: null,
+        });
+        g.notified += 1;
+        g.responded += 1;
+        if (resp.response === "I Can Donate") g.can_donate += 1;
       }
     }
 
@@ -1957,7 +2038,30 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           responded: 0,
           can_donate: 0,
           last_sent: req.updated_at || req.created_at,
+          donors: [],
         };
+      } else {
+        // Sync blood request metadata
+        const g = groupsMap[req.id];
+        if (!g.patient_name) g.patient_name = req.patient_name || "";
+        if (!g.hospital_name) g.hospital_name = req.hospital_name || "";
+        if (g.request_number === "Broadcast Alert" && req.request_number) g.request_number = req.request_number;
+        if (g.blood_group === "—" && req.blood_group) g.blood_group = req.blood_group;
+      }
+    }
+
+    // For any groups where blood request metadata was missing, query blood_requests
+    const missingReqIds = Object.keys(groupsMap).filter((rid) => groupsMap[rid].blood_group === "—" || !groupsMap[rid].patient_name);
+    if (missingReqIds.length > 0) {
+      const { data: bReqs } = await supabase.from("blood_requests").select("*").in("id", missingReqIds);
+      for (const br of (bReqs || [])) {
+        if (groupsMap[br.id]) {
+          groupsMap[br.id].request_number = br.request_number || groupsMap[br.id].request_number;
+          groupsMap[br.id].patient_name = br.patient_name || groupsMap[br.id].patient_name;
+          groupsMap[br.id].blood_group = br.blood_group || groupsMap[br.id].blood_group;
+          groupsMap[br.id].urgency = br.urgency || groupsMap[br.id].urgency;
+          groupsMap[br.id].status = br.status || groupsMap[br.id].status;
+        }
       }
     }
 
