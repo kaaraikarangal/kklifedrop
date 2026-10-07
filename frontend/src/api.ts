@@ -233,7 +233,7 @@ export async function getActiveSession(): Promise<ActiveSession> {
 
     const activeToken = token || legToken;
     const activeRole = role || legRole;
-    const activeMobile = mobile || legMobile;
+    let activeMobile = mobile || legMobile;
     const activeDonorStr = donorStr || legDonorStr;
     const activeAdminUserStr = adminUserStr || legAdminUserStr;
 
@@ -257,6 +257,9 @@ export async function getActiveSession(): Promise<ActiveSession> {
         try {
           const parsed = JSON.parse(activeDonorStr);
           donorId = parsed?.id || null;
+          if (!activeMobile && parsed?.mobile) {
+            activeMobile = parsed.mobile;
+          }
         } catch {}
       }
 
@@ -1200,6 +1203,22 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
   if (route === "blood-requests" || route === "api/blood-requests") {
     if (method === "GET") {
       let q = supabase.from("blood_requests").select("*");
+
+      const mobile = queryParams.get("mobile");
+      if (mobile) {
+        const cleanMobile = mobile.replace(/\D/g, "").slice(-10);
+        if (cleanMobile) {
+          q = q.or(`requester_mobile.eq.${cleanMobile},requester_mobile.eq.+91${cleanMobile},requester_mobile.eq.91${cleanMobile}`);
+        }
+      }
+
+      const reqNums = queryParams.get("request_numbers");
+      if (reqNums) {
+        const nums = reqNums.split(",").map(x => x.trim()).filter(Boolean);
+        if (nums.length > 0) {
+          q = q.in("request_number", nums);
+        }
+      }
 
       const urgency = queryParams.get("urgency");
       if (urgency) q = q.eq("urgency", urgency);

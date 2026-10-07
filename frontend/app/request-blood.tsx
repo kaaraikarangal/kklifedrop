@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, radius, spacing } from "@/src/theme";
-import { api } from "@/src/api";
+import { api, getActiveSession, MOBILE_KEY, DONOR_KEY, LEGACY_DONOR_KEY } from "@/src/api";
 import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
@@ -28,14 +29,47 @@ export default function RequestBlood() {
   });
   const set = (k: string, v: any) => setF((p: any) => ({ ...p, [k]: v }));
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const session = await getActiveSession();
+        const donorStr = (await AsyncStorage.getItem(DONOR_KEY)) || (await AsyncStorage.getItem(LEGACY_DONOR_KEY));
+        let donor: any = null;
+        if (donorStr) {
+          try { donor = JSON.parse(donorStr); } catch {}
+        }
+        setF((prev: any) => ({
+          ...prev,
+          requester_mobile: prev.requester_mobile || session?.mobile || donor?.mobile || "",
+          requester_name: prev.requester_name || donor?.name || "",
+          requester_email: prev.requester_email || donor?.email || "",
+        }));
+      } catch {}
+    })();
+  }, []);
+
   async function submit() {
     const required = ["patient_name", "hospital_name", "hospital_area", "hospital_city", "requester_name", "requester_mobile"];
     for (const k of required) if (!f[k]?.trim()) return toast("error", "Missing", `Please fill ${k.replace(/_/g, " ")}`);
     setLoading(true);
     try {
-      const payload = { ...f, units_required: parseInt(f.units_required, 10) || 1, requester_email: f.requester_email || null };
+      const cleanMobile = (f.requester_mobile || "").replace(/\D/g, "").slice(-10);
+      const payload = { ...f, requester_mobile: cleanMobile, units_required: parseInt(f.units_required, 10) || 1, requester_email: f.requester_email || null };
       const r: any = await api("/blood-requests", { body: payload });
       const reqId = r?.request_id || r?.request_number || r?.request?.request_number || r?.id || "Submitted";
+
+      if (cleanMobile) {
+        await AsyncStorage.setItem(MOBILE_KEY, cleanMobile);
+      }
+      try {
+        const stored = await AsyncStorage.getItem("kk_my_request_numbers");
+        const list = stored ? JSON.parse(stored) : [];
+        if (reqId && reqId !== "Submitted" && !list.includes(reqId)) {
+          list.push(reqId);
+          await AsyncStorage.setItem("kk_my_request_numbers", JSON.stringify(list));
+        }
+      } catch {}
+
       setDone(reqId);
       toast("success", "Submitted", `Request ID: ${reqId}`);
     } catch (e: any) {

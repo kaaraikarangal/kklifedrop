@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, FlatList, Pressable } from "react-native";
-import { router } from "expo-router";
+import React, { useState, useCallback } from "react";
+import { View, Text, StyleSheet, FlatList, Pressable, RefreshControl, ActivityIndicator } from "react-native";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, radius, spacing } from "@/src/theme";
-import { api, MOBILE_KEY } from "@/src/api";
+import { api, MOBILE_KEY, LEGACY_MOBILE_KEY, DONOR_KEY, LEGACY_DONOR_KEY, getActiveSession } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -22,15 +22,96 @@ const STATUS_COLOR: Record<string, string> = {
 export default function Requests() {
   const insets = useSafeAreaInsets();
   const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<"mine" | "all">("mine");
 
-  async function load() {
-    const mobile = await AsyncStorage.getItem(MOBILE_KEY);
-    const q = tab === "mine" && mobile ? `?mobile=${mobile}` : "";
-    const r: any = await api(`/blood-requests${q}`);
-    setRequests(r.requests || []);
+  async function resolveUserMobile(): Promise<string | null> {
+    try {
+      const session = await getActiveSession();
+      if (session?.mobile) return session.mobile.replace(/\D/g, "").slice(-10);
+
+      const m = (await AsyncStorage.getItem(MOBILE_KEY)) || (await AsyncStorage.getItem(LEGACY_MOBILE_KEY));
+      if (m) return m.replace(/\D/g, "").slice(-10);
+
+      const donorStr = (await AsyncStorage.getItem(DONOR_KEY)) || (await AsyncStorage.getItem(LEGACY_DONOR_KEY));
+      if (donorStr) {
+        try {
+          const parsed = JSON.parse(donorStr);
+          if (parsed?.mobile) return parsed.mobile.replace(/\D/g, "").slice(-10);
+        } catch {}
+      }
+    } catch {}
+    return null;
   }
-  useEffect(() => { load(); }, [tab]);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const mobile = await resolveUserMobile();
+
+      if (tab === "mine") {
+        // Read any locally submitted request numbers from this device
+        let localReqNumbers: string[] = [];
+        try {
+          const stored = await AsyncStorage.getItem("kk_my_request_numbers");
+          if (stored) localReqNumbers = JSON.parse(stored);
+        } catch {}
+
+        // If user is not logged in / has no mobile and no local requests, My Requests is strictly empty
+        if (!mobile && localReqNumbers.length === 0) {
+          setRequests([]);
+          setLoading(false);
+          return;
+        }
+
+        let myRequests: any[] = [];
+        if (mobile) {
+          const r: any = await api(`/blood-requests?mobile=${mobile}`);
+          myRequests = r?.requests || [];
+        }
+
+        // Merge any locally tracked request numbers not already returned
+        if (localReqNumbers.length > 0) {
+          const existingIds = new Set(myRequests.map((x: any) => x.request_number || x.id));
+          const missing = localReqNumbers.filter((n) => !existingIds.has(n));
+          if (missing.length > 0) {
+            try {
+              const rMissing: any = await api(`/blood-requests?request_numbers=${missing.join(",")}`);
+              if (rMissing?.requests?.length) {
+                myRequests = [...myRequests, ...rMissing.requests];
+              }
+            } catch {}
+          }
+        }
+
+        // Deduplicate and sort by created_at descending
+        const seen = new Set();
+        const unique = myRequests.filter((item) => {
+          const key = item.request_number || item.id;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        unique.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        setRequests(unique);
+      } else {
+        // All Requests: fetch all public blood requests without user filter
+        const r: any = await api("/blood-requests");
+        setRequests(r?.requests || []);
+      }
+    } catch (e) {
+      console.error("Failed to load blood requests:", e);
+      setRequests([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [tab])
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -53,9 +134,38 @@ export default function Requests() {
 
       <FlatList
         data={requests}
-        keyExtractor={(r) => r.id}
-        contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: insets.bottom + 24 }}
-        ListEmptyComponent={<Text style={styles.empty}>No requests yet.</Text>}
+        keyExtractor={(r) => r.id || r.request_number}
+        contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: insets.bottom + 24, flexGrow: 1 }}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.brandPrimary} colors={[colors.brandPrimary]} />}
+        ListEmptyComponent={
+          loading ? (
+            <View style={styles.emptyContainer}>
+              <ActivityIndicator size="small" color={colors.brandPrimary} />
+            </View>
+          ) : tab === "mine" ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconBg}>
+                <Ionicons name="water-outline" size={36} color={colors.brandPrimary} />
+              </View>
+              <Text style={styles.emptyTitle}>No Personal Requests</Text>
+              <Text style={styles.emptySub}>
+                Requests you submit for blood will appear here so you can track matching donors and fulfillment in real time.
+              </Text>
+              <Pressable style={styles.emptyActionBtn} onPress={() => router.push("/request-blood")}>
+                <Ionicons name="add-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.emptyActionText}>Request Blood Now</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconBg}>
+                <Ionicons name="file-tray-outline" size={36} color={colors.muted} />
+              </View>
+              <Text style={styles.emptyTitle}>No Blood Requests</Text>
+              <Text style={styles.emptySub}>There are currently no active public blood requests.</Text>
+            </View>
+          )
+        }
         renderItem={({ item: r }) => (
           <Pressable
             testID={`request-card-${r.id}`}
@@ -67,10 +177,18 @@ export default function Requests() {
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <Text style={styles.name}>{r.patient_name}</Text>
-                  {r.urgency === "Emergency" ? <View style={styles.emergBadge}><Text style={styles.emergText}>EMERGENCY</Text></View> : null}
+                  {r.urgency === "Emergency" ? (
+                    <View style={styles.emergBadge}>
+                      <Text style={styles.emergText}>EMERGENCY</Text>
+                    </View>
+                  ) : null}
                 </View>
-                <Text style={styles.meta}>{r.hospital_name} • {r.hospital_city}</Text>
-                <Text style={styles.sub}>Req ID: {r.request_number} • {r.units_required} units</Text>
+                <Text style={styles.meta}>
+                  {r.hospital_name} • {r.hospital_city}
+                </Text>
+                <Text style={styles.sub}>
+                  Req ID: {r.request_number} • {r.units_required} {r.units_required === 1 ? "unit" : "units"}
+                </Text>
               </View>
             </View>
             <View style={styles.cardFooter}>
@@ -108,5 +226,10 @@ const styles = StyleSheet.create({
   statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
   statusText: { fontSize: 11, fontWeight: "700" },
   date: { fontSize: 11, color: colors.muted },
-  empty: { textAlign: "center", color: colors.muted, marginTop: 40 },
+  emptyContainer: { alignItems: "center", justifyContent: "center", marginTop: 40, paddingHorizontal: spacing.xl },
+  emptyIconBg: { width: 68, height: 68, borderRadius: 34, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center", marginBottom: spacing.md },
+  emptyTitle: { fontSize: 17, fontWeight: "700", color: colors.onSurface, marginBottom: 6, textAlign: "center" },
+  emptySub: { fontSize: 13, color: colors.muted, textAlign: "center", lineHeight: 18, marginBottom: spacing.lg },
+  emptyActionBtn: { flexDirection: "row", alignItems: "center", backgroundColor: colors.brandPrimary, paddingVertical: 10, paddingHorizontal: 18, borderRadius: radius.pill },
+  emptyActionText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
 });
