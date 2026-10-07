@@ -3,7 +3,7 @@
     "name": "KK Life Drop",
     "slug": "kaaraikarangal",
     "owner": "kaaraikarangals-team",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kklifedrop",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "org.kaaraikarangal.kklifedrop",
-      "buildNumber": "3"
+      "buildNumber": "4"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +19,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "org.kaaraikarangal.kklifedrop",
-      "versionCode": 3,
+      "versionCode": 4,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "INTERNET",
