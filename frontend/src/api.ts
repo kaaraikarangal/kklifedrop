@@ -1052,86 +1052,102 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const pushToken = (body.push_token || "").trim();
       const platform = body.platform || (typeof navigator !== "undefined" ? "web" : "expo");
 
-      if (pushToken && (pushToken.startsWith("ExponentPushToken") || pushToken.startsWith("ExpoPushToken"))) {
-        let donorId = body.donor_id || null;
-
-        if (!donorId) {
-          try {
-            const cachedStr = (await AsyncStorage.getItem(DONOR_KEY)) || (await AsyncStorage.getItem("k2_donor"));
-            if (cachedStr) {
-              const parsed = JSON.parse(cachedStr);
-              donorId = parsed?.id || null;
-            }
-          } catch {}
-        }
-
-        if (!donorId && cleanMobile.length === 10) {
-          const { data: donor } = await supabase
-            .from("donors")
-            .select("id")
-            .eq("mobile", cleanMobile)
-            .limit(1)
-            .maybeSingle();
-          donorId = donor?.id || null;
-        }
-
-        let adminEmail = body.admin_email || null;
-        if (!adminEmail) {
-          try {
-            const adminStr = (await AsyncStorage.getItem(ADMIN_USER_KEY)) || (await AsyncStorage.getItem("k2_admin_user"));
-            if (adminStr) {
-              const parsed = JSON.parse(adminStr);
-              adminEmail = parsed?.email || null;
-            }
-          } catch {}
-        }
-
-        const targetType = donorId ? "donor" : adminEmail ? "admin" : "device";
-        const targetId = donorId || adminEmail || "global_device";
-
-        // Query existing push token records to update or insert
-        const { data: existing } = await supabase
-          .from("audit_logs")
-          .select("id, target_id, target_type, metadata")
-          .eq("action", "donor_push_token")
-          .order("timestamp", { ascending: false })
-          .limit(100);
-
-        const found = (existing || []).find((row: any) => {
-          const m = row.metadata as any;
-          return m?.push_token === pushToken;
-        });
-
-        const newMeta = {
-          push_token: pushToken,
-          donor_id: donorId || (found?.metadata as any)?.donor_id || null,
-          mobile: cleanMobile || (found?.metadata as any)?.mobile || null,
-          admin_email: adminEmail || (found?.metadata as any)?.admin_email || null,
-          platform,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (found) {
-          await supabase
-            .from("audit_logs")
-            .update({
-              target_id: targetId !== "global_device" ? targetId : found.target_id,
-              target_type: targetType !== "device" ? targetType : found.target_type,
-              metadata: newMeta,
-            })
-            .eq("id", found.id);
-          console.log(`[PushToken] Updated token registration for ${targetId}`);
-        } else {
-          await supabase.from("audit_logs").insert({
-            admin_id: adminEmail || (cleanMobile ? `user:${cleanMobile}` : "system"),
-            action: "donor_push_token",
-            target_id: targetId,
-            target_type: targetType,
-            metadata: newMeta,
-          });
-          console.log(`[PushToken] Registered new push token for ${targetId}`);
-        }
+      if (!pushToken) {
+        console.log("[PushToken] No push token provided, skipping registration");
+        return { ok: true } as unknown as T;
       }
+
+      // Accept any Expo push token format (ExponentPushToken or ExpoPushToken)
+      const isValidExpoToken = pushToken.startsWith("ExponentPushToken") || pushToken.startsWith("ExpoPushToken");
+      if (!isValidExpoToken) {
+        console.log("[PushToken] Token format not recognized:", pushToken.substring(0, 30));
+        return { ok: true } as unknown as T;
+      }
+
+      // --- PRIMARY: Save directly to donors.push_token (most reliable) ---
+      let donorId = body.donor_id || null;
+
+      if (!donorId) {
+        try {
+          const cachedStr = (await AsyncStorage.getItem(DONOR_KEY)) || (await AsyncStorage.getItem("k2_donor"));
+          if (cachedStr) {
+            const parsed = JSON.parse(cachedStr);
+            donorId = parsed?.id || null;
+          }
+        } catch {}
+      }
+
+      if (!donorId && cleanMobile.length === 10) {
+        const { data: donor } = await supabase
+          .from("donors")
+          .select("id")
+          .eq("mobile", cleanMobile)
+          .limit(1)
+          .maybeSingle();
+        donorId = donor?.id || null;
+      }
+
+      if (donorId) {
+        // Save push_token directly on the donor row — simplest and most reliable
+        const { error: updateErr } = await supabase
+          .from("donors")
+          .update({ push_token: pushToken })
+          .eq("id", donorId);
+        if (updateErr) {
+          console.warn("[PushToken] Failed to update donors.push_token:", updateErr.message);
+        } else {
+          console.log("[PushToken] ✅ Saved push_token directly on donor:", donorId);
+        }
+      } else {
+        console.log("[PushToken] Could not resolve donor ID from mobile:", cleanMobile, "- token will be saved to audit_logs only");
+      }
+
+      // --- SECONDARY: Also save to audit_logs for admin devices and fallback ---
+      let adminEmail = body.admin_email || null;
+      if (!adminEmail) {
+        try {
+          const adminStr = (await AsyncStorage.getItem(ADMIN_USER_KEY)) || (await AsyncStorage.getItem("k2_admin_user"));
+          if (adminStr) {
+            const parsed = JSON.parse(adminStr);
+            adminEmail = parsed?.email || null;
+          }
+        } catch {}
+      }
+
+      const targetType = donorId ? "donor" : adminEmail ? "admin" : "device";
+      const targetId = donorId || adminEmail || "global_device";
+      const newMeta = {
+        push_token: pushToken,
+        donor_id: donorId || null,
+        mobile: cleanMobile || null,
+        admin_email: adminEmail || null,
+        platform,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Check if this exact token is already in audit_logs
+      const { data: existing } = await supabase
+        .from("audit_logs")
+        .select("id")
+        .eq("action", "donor_push_token")
+        .contains("metadata", { push_token: pushToken })
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        await supabase
+          .from("audit_logs")
+          .update({ target_id: targetId, target_type: targetType, metadata: newMeta })
+          .eq("id", existing[0].id);
+      } else {
+        await supabase.from("audit_logs").insert({
+          admin_id: adminEmail || (cleanMobile ? `user:${cleanMobile}` : "system"),
+          action: "donor_push_token",
+          target_id: targetId,
+          target_type: targetType,
+          metadata: newMeta,
+        });
+      }
+      console.log("[PushToken] ✅ Registered/updated token for", targetId, "platform:", platform);
     } catch (err) {
       console.warn("[PushToken] Failed to register push token:", err);
     }
@@ -1363,25 +1379,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       : `Urgent blood request: Verified donor match needed for ${request.blood_group} blood in Karaikal.`;
     const message = body.message || defaultMsg;
 
-    // 1. Fetch targeted donors to get their mobiles and full names
+    // 1. Fetch targeted donors WITH their push tokens directly from donors table
     const { data: targetDonors } = await supabase
       .from("donors")
-      .select("id, mobile, full_name, blood_group")
+      .select("id, mobile, full_name, blood_group, push_token")
       .in("id", donorIds);
-
-    // Fetch latest push tokens from audit_logs
-    const { data: pushLogs } = await supabase
-      .from("audit_logs")
-      .select("id, target_id, target_type, metadata, timestamp")
-      .eq("action", "donor_push_token")
-      .order("timestamp", { ascending: false });
-
-    const targetDonorIds = new Set(donorIds);
-    const targetMobiles = new Set(
-      (targetDonors || [])
-        .map((d) => (d.mobile || "").replace(/\D/g, "").slice(-10))
-        .filter((m) => m.length === 10)
-    );
 
     // 2. Upsert notification records in database
     for (const donorId of donorIds) {
@@ -1399,14 +1401,39 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       );
     }
 
-    // Collect all valid unique tokens associated with targeted donors or active devices
+    // 3. Collect push tokens: PRIMARY from donors.push_token, FALLBACK from audit_logs
     const donorPushTokens = new Set<string>();
+
+    // PRIMARY: Get tokens directly from donors table (most reliable)
+    for (const donor of targetDonors || []) {
+      const tok = (donor.push_token || "").trim();
+      if (tok && (tok.startsWith("ExponentPushToken") || tok.startsWith("ExpoPushToken"))) {
+        donorPushTokens.add(tok);
+        console.log("[Push] Token from donors table for", donor.full_name, ":", tok.substring(0, 30));
+      } else {
+        console.log("[Push] No push_token on donors table for", donor.full_name, "- will check audit_logs");
+      }
+    }
+
+    // FALLBACK: Also check audit_logs for any tokens not yet on donors.push_token
+    const { data: pushLogs } = await supabase
+      .from("audit_logs")
+      .select("id, target_id, target_type, metadata")
+      .eq("action", "donor_push_token")
+      .order("timestamp", { ascending: false })
+      .limit(200);
+
+    const targetDonorIds = new Set(donorIds);
+    const targetMobiles = new Set(
+      (targetDonors || [])
+        .map((d) => (d.mobile || "").replace(/\D/g, "").slice(-10))
+        .filter((m) => m.length === 10)
+    );
+
     for (const log of pushLogs || []) {
       const meta = log.metadata as any;
       const tok = (meta?.push_token || "").trim();
-      if (!tok || (!tok.startsWith("ExponentPushToken") && !tok.startsWith("ExpoPushToken"))) {
-        continue;
-      }
+      if (!tok || (!tok.startsWith("ExponentPushToken") && !tok.startsWith("ExpoPushToken"))) continue;
 
       const logMobile = meta.mobile ? String(meta.mobile).replace(/\D/g, "").slice(-10) : "";
       const logDonorId = meta.donor_id || log.target_id;
@@ -1421,6 +1448,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         donorPushTokens.add(tok);
       }
     }
+
+    console.log(`[Push] Total push tokens collected: ${donorPushTokens.size} for ${donorIds.length} target donor(s)`);
 
     // 3. Dispatch Expo Push Notifications (Wakes phone even if app is completely closed)
     const pushMessages: any[] = [];
