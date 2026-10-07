@@ -71,11 +71,15 @@ export async function refreshPendingNotifications(): Promise<{
 }> {
   try {
     const r: any = await api("/notifications", { auth: true });
-    const all = r?.notifications || [];
+    const rawAll = r?.notifications || [];
+    const all = rawAll.filter((n: any) => {
+      const reqStatus = n.request?.status || n.blood_requests?.status;
+      return reqStatus !== "Cancelled" && n.status !== "cancelled" && n.response !== "Cancelled";
+    });
     const readIdsList = await getReadNotificationIds();
     const readIds = new Set(readIdsList);
 
-    // Pending: requires donor action/response OR is unread
+    // Pending: requires donor action/response OR is unread (excluding any cancelled requests)
     const pending = all.filter((n: any) => !n.response || !readIds.has(n.id));
 
     currentPendingCount = pending.length;

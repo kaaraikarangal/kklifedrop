@@ -1536,6 +1536,13 @@ async def admin_update_status(req_id: str, body: UpdateRequestStatusIn, admin: d
     if not r.data:
         raise HTTPException(404, "Request not found")
 
+    # If status is Cancelled, remove all notifications sent to donors for this request
+    if body.status == "Cancelled":
+        actual_req = r.data[0]
+        actual_id = actual_req.get("id")
+        if actual_id:
+            await sb.table("notifications").delete().eq("request_id", actual_id).execute()
+
     # If fulfilled by a registered donor, update their last_donation_date to start their 3-month cooldown
     if body.fulfilled_by_donor_id:
         d_date = body.donation_date or datetime.now(timezone.utc).date().isoformat()

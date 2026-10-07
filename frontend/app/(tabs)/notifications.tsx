@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, StyleSheet, FlatList, Pressable, RefreshControl } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -23,7 +23,12 @@ export default function Notifications() {
   const load = useCallback(async () => {
     try {
       const r: any = await api("/notifications", { auth: true });
-      const list = r?.notifications || [];
+      const rawList = r?.notifications || [];
+      // Remove any notification linked to a cancelled blood request
+      const list = rawList.filter((n: any) => {
+        const reqStatus = n.request?.status || n.blood_requests?.status;
+        return reqStatus !== "Cancelled" && n.status !== "cancelled" && n.response !== "Cancelled";
+      });
       setItems(list);
 
       // If there are notifications, mark them as seen
@@ -45,9 +50,11 @@ export default function Notifications() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);

@@ -1658,8 +1658,14 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       return { notifications: [] } as unknown as T;
     }
 
+    // Exclude any notifications whose blood request has been cancelled or notification cancelled
+    const activeNotifs = (notifs || []).filter((item) => {
+      const reqStatus = item.blood_requests?.status || item.request?.status;
+      return reqStatus !== "Cancelled" && item.status !== "cancelled" && item.response !== "Cancelled";
+    });
+
     // Normalize so joined blood_requests is accessible as both `request` and `blood_requests`
-    const formatted = (notifs || []).map((item) => ({
+    const formatted = activeNotifs.map((item) => ({
       ...item,
       request: item.blood_requests || item.request || {},
     }));
@@ -1847,16 +1853,40 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     const admin = await requireAdminAuth();
     const parts = route.split("/");
     const reqId = parts[parts.length - 2];
-    await supabase.from("blood_requests").update({ status: body.status }).eq("id", reqId);
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let bloodReqQuery = supabase.from("blood_requests").select("id, request_number, status");
+    if (UUID_RE.test(reqId)) {
+      bloodReqQuery = bloodReqQuery.or(`id.eq.${reqId},request_number.eq.${reqId}`);
+    } else {
+      bloodReqQuery = bloodReqQuery.eq("request_number", reqId);
+    }
+    const { data: bloodReq } = await bloodReqQuery.maybeSingle();
+
+    const actualId = bloodReq?.id || (UUID_RE.test(reqId) ? reqId : null);
+
+    let updateQuery = supabase.from("blood_requests").update({ status: body.status });
+    if (actualId) {
+      updateQuery = updateQuery.eq("id", actualId);
+    } else {
+      updateQuery = updateQuery.eq("request_number", reqId);
+    }
+    await updateQuery;
+
+    // When admin cancels a blood request, remove all notifications sent to donors for this request
+    if (body.status === "Cancelled" && actualId) {
+      await supabase.from("notifications").delete().eq("request_id", actualId);
+    }
 
     await recordAuditLog({
       actor: admin.email,
       action: "update_request_status",
       target_type: "blood_request",
-      target_id: reqId,
+      target_id: actualId || reqId,
       metadata: {
         new_status: body.status,
         updated_by: admin.email,
+        notifications_cancelled: body.status === "Cancelled",
       },
     });
 
