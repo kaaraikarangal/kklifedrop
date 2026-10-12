@@ -20,6 +20,7 @@ import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
+import { LocationSelector } from "@/src/components/LocationSelector";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const GENDERS = ["Male", "Female", "Other"];
@@ -310,42 +311,14 @@ export default function EditProfile() {
         {/* SECTION 3: Location Details */}
         <Text style={styles.sectionHeader}>Location & Residential Area</Text>
         <View style={styles.card}>
-          <Input
-            testID="edit-area-input"
-            label="Area / Locality *"
-            value={f.area}
-            onChangeText={(v) => setField("area", v)}
-            placeholder="e.g. Kennadiyar Street / Nehru Nagar"
-          />
-          <Input
-            testID="edit-place-input"
-            label="Place / City *"
-            value={f.place}
-            onChangeText={(v) => setField("place", v)}
-            placeholder="e.g. Karaikal"
-          />
-          <Input
-            testID="edit-district-input"
-            label="District *"
-            value={f.district}
-            onChangeText={(v) => setField("district", v)}
-            placeholder="e.g. Karaikal / Nagapattinam"
-          />
-          <Input
-            testID="edit-state-input"
-            label="State / Union Territory"
-            value={f.state}
-            onChangeText={(v) => setField("state", v)}
-            placeholder="e.g. Puducherry"
-          />
-          <Input
-            testID="edit-pincode-input"
-            label="Pincode (6 digits) *"
-            value={f.pincode}
-            onChangeText={(v) => setField("pincode", v.replace(/\D/g, "").slice(0, 6))}
-            placeholder="609602"
-            keyboardType="number-pad"
-            maxLength={6}
+          <LocationSelector
+            testIDPrefix="edit-"
+            pincode={f.pincode}
+            state={f.state}
+            district={f.district}
+            place={f.place}
+            area={f.area}
+            onChange={(field, value) => setField(field, value)}
           />
         </View>
 

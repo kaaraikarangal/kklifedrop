@@ -10,6 +10,7 @@ import { Button } from "@/src/Button";
 import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
+import { LocationSelector } from "@/src/components/LocationSelector";
 
 const GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const GENDERS = ["Male", "Female", "Other"];
@@ -20,7 +21,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [f, setF] = useState<any>({
     full_name: "", gender: "Male", date_of_birth: "1995-01-01", blood_group: "B+",
-    email: "", mobile, area: "", place: "", district: "", state: "", pincode: "",
+    email: "", mobile, area: "", place: "", district: "Karaikal", state: "Puducherry", pincode: "",
     aadhaar: "", availability: "Available", donation_opt_in: true,
     last_donation_date: "", consent: false,
   });
@@ -80,11 +81,14 @@ export default function Register() {
         <Input testID="email-input" label="Email" value={f.email} onChangeText={(v) => set("email", v)} keyboardType="email-address" autoCapitalize="none" />
 
         <Section title="Location" />
-        <Input testID="area-input" label="Area" value={f.area} onChangeText={(v) => set("area", v)} />
-        <Input testID="place-input" label="Place / City" value={f.place} onChangeText={(v) => set("place", v)} />
-        <Input testID="district-input" label="District" value={f.district} onChangeText={(v) => set("district", v)} />
-        <Input testID="state-input" label="State" value={f.state} onChangeText={(v) => set("state", v)} />
-        <Input testID="pincode-input" label="Pincode" value={f.pincode} onChangeText={(v) => set("pincode", v.replace(/\D/g, "").slice(0, 6))} keyboardType="number-pad" maxLength={6} />
+        <LocationSelector
+          pincode={f.pincode}
+          state={f.state}
+          district={f.district}
+          place={f.place}
+          area={f.area}
+          onChange={(k, v) => set(k, v)}
+        />
 
         <Section title="Identification" />
         <Input

@@ -707,6 +707,30 @@ async def public_stats():
 
 
 
+@api.get("/locations/pincode/{pincode}")
+async def lookup_pincode_proxy(pincode: str):
+    """
+    Free India Post Postal Pincode API proxy.
+    Returns State, District, and all locality places under the 6-digit pincode.
+    """
+    clean_pin = re.sub(r"\D", "", pincode)[:6]
+    if len(clean_pin) != 6:
+        raise HTTPException(400, "Pincode must be exactly 6 digits")
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(f"https://api.postalpincode.in/pincode/{clean_pin}")
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list) and len(data) > 0 and data[0].get("Status") == "Success":
+                    return data
+        raise HTTPException(404, "Pincode not found on India Post registry")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Pincode lookup error: {e}")
+        raise HTTPException(502, "Error reaching India Post Pincode API")
+
+
 @api.post("/auth/send-otp")
 async def send_otp(body: SendOtpIn):
     clean_mobile = re.sub(r"\D", "", body.mobile)[-10:]

@@ -473,6 +473,18 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     } as unknown as T;
   }
 
+  // Free India Post Pincode API lookup route
+  if (route.startsWith("locations/pincode/") || route.startsWith("api/locations/pincode/")) {
+    const pin = route.split("/").pop() || "";
+    const cleanPin = pin.replace(/\D/g, "").slice(0, 6);
+    if (cleanPin.length !== 6) throw new Error("Pincode must be 6 digits");
+
+    const res = await fetch(`https://api.postalpincode.in/pincode/${cleanPin}`);
+    if (!res.ok) throw new Error("India Post API error");
+    const data = await res.json();
+    return data as unknown as T;
+  }
+
   // 2. Root / branding info
   if (route === "" || route === "api") {
     return {
