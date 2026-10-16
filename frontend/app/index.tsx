@@ -19,6 +19,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { getActiveSession } from "@/src/api";
 import { BrandLogo } from "@/src/components/BrandLogo";
+import { BloodInspirationCard } from "@/src/components/BloodInspirationCard";
 
 const LOGO_FULL = require("@/assets/images/kk_life_drop_logo.png");
 const LOGO_SYMBOL = require("@/assets/images/kk_life_drop_symbol.png");
@@ -331,6 +332,12 @@ export default function Landing() {
             </View>
           </View>
         </Animated.View>
+
+        {/* BLOOD Acrostic Inspiration Banner */}
+        <BloodInspirationCard
+          onActionPress={() => router.push("/auth/mobile")}
+          actionText="Join as a Lifesaver"
+        />
 
         {/* Official Organization Trust Banner */}
         <View style={styles.orgSection}>

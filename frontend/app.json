@@ -25,7 +25,8 @@
         "INTERNET",
         "POST_NOTIFICATIONS",
         "VIBRATE"
-      ]
+      ],
+      "jsEngine": "hermes"
     },
     "web": {
       "bundler": "metro",
@@ -55,7 +56,17 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-status-bar",
-      "@react-native-vector-icons/ionicons"
+      "@react-native-vector-icons/ionicons",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "reactNativeArchitectures": ["armeabi-v7a", "arm64-v8a"]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false

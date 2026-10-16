@@ -8,6 +8,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
+import { BloodInspirationCard } from "@/src/components/BloodInspirationCard";
 import {
   subscribePendingCount,
   refreshPendingNotifications,
@@ -270,6 +271,35 @@ export default function Home() {
           </Pressable>
         </View>
 
+        {/* Donor Eligibility AI Assistant Banner */}
+        <Pressable
+          style={styles.aiEligibilityBanner}
+          onPress={() => router.push("/donor-criteria-chat")}
+          testID="home-ai-eligibility-btn"
+        >
+          <LinearGradient
+            colors={["#0052D4", "#0A2540"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.aiIconBadge}>
+            <Ionicons name="chatbubbles" size={18} color="#FFFFFF" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0, justifyContent: "center" }}>
+            <View style={styles.aiPillRow}>
+              <Text style={styles.aiPillText} numberOfLines={1}>NBTC GUIDELINES FEB 2025</Text>
+            </View>
+            <Text style={styles.aiBannerTitle} numberOfLines={1} ellipsizeMode="tail">
+              Can I Donate Blood? Ask Criteria AI
+            </Text>
+            <Text style={styles.aiBannerSub} numberOfLines={1} ellipsizeMode="tail">
+              Instant answers on tattoos, medications & rules
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#FFFFFF" />
+        </Pressable>
+
         {/* ========================================================================= */}
         {/* USER COUNT BY BLOOD GROUP BREAKDOWN */}
         {/* ========================================================================= */}
@@ -310,6 +340,12 @@ export default function Home() {
             );
           })}
         </View>
+
+        {/* BLOOD Acrostic Inspiration Banner */}
+        <BloodInspirationCard
+          onActionPress={() => router.push("/(tabs)/profile")}
+          actionText="My Donor Status"
+        />
 
         {/* Organization Info Banner */}
         <View style={styles.trustBanner}>
@@ -700,5 +736,56 @@ const styles = StyleSheet.create({
     color: "#0369A1",
     lineHeight: 16,
     fontWeight: "500",
+  },
+
+  /* AI Eligibility Banner */
+  aiEligibilityBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: spacing.lg,
+    marginVertical: spacing.xs,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    overflow: "hidden",
+    shadowColor: "#0052D4",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  aiIconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  aiPillRow: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    marginBottom: 2,
+  },
+  aiPillText: {
+    fontSize: 8.5,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
+  },
+  aiBannerTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+  },
+  aiBannerSub: {
+    fontSize: 10.5,
+    color: "rgba(255, 255, 255, 0.85)",
+    marginTop: 1,
   },
 });
