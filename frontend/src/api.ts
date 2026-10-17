@@ -18,6 +18,7 @@ import {
   supabase,
   SUPABASE_URL,
 } from "./supabase";
+import { formatDateToYYYYMMDD } from "./utils/dateUtils";
 
 export const TOKEN_KEY = "kk_token";
 export const ROLE_KEY = "kk_role";
@@ -68,6 +69,17 @@ export const REQUEST_STATUSES = [
   "Expired",
 ];
 export const DONATION_MIN_INTERVAL_DAYS = 90;
+export const DONATION_MIN_INTERVAL_DAYS_MALE = 90;
+export const DONATION_MIN_INTERVAL_DAYS_FEMALE = 120;
+
+export function getDonationIntervalDays(gender?: string | null): number {
+  if (!gender) return DONATION_MIN_INTERVAL_DAYS_MALE;
+  const g = String(gender).trim().toLowerCase();
+  if (g === "female" || g === "f") {
+    return DONATION_MIN_INTERVAL_DAYS_FEMALE;
+  }
+  return DONATION_MIN_INTERVAL_DAYS_MALE;
+}
 
 export function resolveFallbackBaseUrl(): string {
   return SUPABASE_URL;
@@ -296,13 +308,14 @@ export async function getActiveSession(): Promise<ActiveSession> {
 // ---------------------------------------------------------------------------
 function getDonorCooldown(donor: any) {
   const ld = donor?.last_donation_date;
+  const intervalDays = getDonationIntervalDays(donor?.gender);
   if (!ld) {
-    return { in_cooldown: false, cooldown_days_left: 0, cooldown_end_date: null };
+    return { in_cooldown: false, cooldown_days_left: 0, cooldown_end_date: null, cooldown_total_days: intervalDays };
   }
   try {
     const lastDate = new Date(ld.slice(0, 10));
     const endDate = new Date(lastDate);
-    endDate.setDate(endDate.getDate() + DONATION_MIN_INTERVAL_DAYS);
+    endDate.setDate(endDate.getDate() + intervalDays);
     const now = new Date();
     const diffMs = endDate.getTime() - now.getTime();
     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
@@ -311,10 +324,11 @@ function getDonorCooldown(donor: any) {
         in_cooldown: true,
         cooldown_days_left: diffDays,
         cooldown_end_date: endDate.toISOString().slice(0, 10),
+        cooldown_total_days: intervalDays,
       };
     }
   } catch {}
-  return { in_cooldown: false, cooldown_days_left: 0, cooldown_end_date: null };
+  return { in_cooldown: false, cooldown_days_left: 0, cooldown_end_date: null, cooldown_total_days: intervalDays };
 }
 
 function toPublicDonor(doc: any) {
@@ -334,6 +348,7 @@ function toPublicDonor(doc: any) {
     in_cooldown: cd.in_cooldown,
     cooldown_days_left: cd.cooldown_days_left,
     cooldown_end_date: cd.cooldown_end_date,
+    cooldown_total_days: cd.cooldown_total_days,
     is_eligible: doc.availability === "Available" && (doc.donation_opt_in ?? false) && !cd.in_cooldown,
     masked_aadhaar: doc.masked_aadhaar,
     created_at: doc.created_at,
@@ -470,6 +485,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       urgency: URGENCY,
       request_statuses: REQUEST_STATUSES,
       min_donation_interval_days: DONATION_MIN_INTERVAL_DAYS,
+      min_donation_interval_days_male: DONATION_MIN_INTERVAL_DAYS_MALE,
+      min_donation_interval_days_female: DONATION_MIN_INTERVAL_DAYS_FEMALE,
     } as unknown as T;
   }
 
@@ -969,7 +986,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const insertData = {
         full_name: body.full_name,
         gender: body.gender,
-        date_of_birth: body.date_of_birth,
+        date_of_birth: formatDateToYYYYMMDD(body.date_of_birth),
         blood_group: body.blood_group,
         email: body.email || null,
         mobile: cleanMobile,
@@ -982,7 +999,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         masked_aadhaar: masked,
         availability: "Available",
         donation_opt_in: true,
-        last_donation_date: body.last_donation_date || null,
+        last_donation_date: formatDateToYYYYMMDD(body.last_donation_date) || null,
         status: "active",
         push_token: cachedPushToken,
       };
@@ -1048,7 +1065,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const updates: any = {};
       if (body.full_name !== undefined) updates.full_name = String(body.full_name).trim();
       if (body.gender !== undefined) updates.gender = body.gender;
-      if (body.date_of_birth !== undefined) updates.date_of_birth = body.date_of_birth;
+      if (body.date_of_birth !== undefined) updates.date_of_birth = formatDateToYYYYMMDD(body.date_of_birth);
       if (body.blood_group !== undefined) updates.blood_group = body.blood_group;
       if (body.email !== undefined) updates.email = body.email ? String(body.email).trim() : null;
       if (body.area !== undefined) updates.area = String(body.area).trim();
@@ -1058,7 +1075,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (body.pincode !== undefined) updates.pincode = String(body.pincode).trim();
       if (body.availability !== undefined) updates.availability = body.availability;
       if (body.donation_opt_in !== undefined) updates.donation_opt_in = body.donation_opt_in;
-      if (body.last_donation_date !== undefined) updates.last_donation_date = body.last_donation_date || null;
+      if (body.last_donation_date !== undefined) updates.last_donation_date = formatDateToYYYYMMDD(body.last_donation_date) || null;
       if (body.aadhaar !== undefined && body.aadhaar) {
         const cleanAadhaar = String(body.aadhaar).replace(/\D/g, "");
         if (cleanAadhaar.length === 12) {
@@ -1301,7 +1318,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         hospital_name: body.hospital_name,
         hospital_area: body.hospital_area || body.hospital_city || "Karaikal",
         hospital_city: body.hospital_city || "Karaikal",
-        required_date: body.required_date || new Date().toISOString().slice(0, 10),
+        required_date: formatDateToYYYYMMDD(body.required_date) || new Date().toISOString().slice(0, 10),
         required_time: body.required_time || null,
         urgency: body.urgency || "Normal",
         requester_name: body.requester_name,
@@ -1470,6 +1487,14 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           .map((d) => d.id);
       } else {
         donorIds = eligible.map((d) => d.id);
+      }
+    } else {
+      const { data: explicitDonors } = await supabase.from("donors").select("*").in("id", donorIds);
+      const resting = (explicitDonors || []).map(toAdminDonor).filter((d) => d.in_cooldown);
+      if (resting.length > 0 && resting.length === explicitDonors?.length) {
+        throw new Error(
+          "Selected donor(s) donated blood recently and are protected under medical rest cooldown (90 days for males / 120 days for females)."
+        );
       }
     }
 
@@ -1868,7 +1893,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     if (body.status) updates.status = body.status;
     if (body.availability) updates.availability = body.availability;
     if (body.donation_opt_in !== undefined) updates.donation_opt_in = body.donation_opt_in;
-    if (body.last_donation_date !== undefined) updates.last_donation_date = body.last_donation_date;
+    if (body.last_donation_date !== undefined) updates.last_donation_date = formatDateToYYYYMMDD(body.last_donation_date) || null;
     if (body.aadhaar) {
       const clean = (body.aadhaar || "").replace(/\D/g, "");
       if (clean.length === 12) {
@@ -1928,6 +1953,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     // When admin cancels a blood request, remove all notifications sent to donors for this request
     if (body.status === "Cancelled" && actualId) {
       await supabase.from("notifications").delete().eq("request_id", actualId);
+    }
+
+    if (body.fulfilled_by_donor_id) {
+      const dDate = body.donation_date || new Date().toISOString().slice(0, 10);
+      await supabase.from("donors").update({ last_donation_date: dDate }).eq("id", body.fulfilled_by_donor_id);
     }
 
     await recordAuditLog({

@@ -59,7 +59,7 @@ export default function TermsAndConditions() {
           </Text>
           <Bullet text="You are between 18 and 65 years of age." />
           <Bullet text="You weigh at least 45–50 kg and are in sound physical health." />
-          <Bullet text="You have completed a mandatory minimum 90-day cooldown period (3 months) since your last whole blood donation." />
+          <Bullet text="You have completed the mandatory minimum deferral period since your last whole blood donation (90 days / 3 months for males; 120 days / 4 months for females)." />
           <Bullet text="You do not have active transmissible infections (HIV, Hepatitis B/C, Syphilis, Malaria) or contraindicating medical conditions." />
           <Text style={styles.p}>
             Final donor eligibility, blood grouping, cross-matching, and screening are always strictly performed and certified by licensed medical officers at the authorized hospital or blood bank prior to transfusion.

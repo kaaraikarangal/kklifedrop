@@ -11,10 +11,12 @@ import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { safeBack } from "@/src/navigation";
+import { DatePickerField } from "@/src/components/DatePickerField";
+import { formatDateToDDMMYYYY, formatDateToYYYYMMDD } from "@/src/utils/dateUtils";
 
 const GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const URGENCY = ["Normal", "Urgent", "Emergency"];
-const RELATIONSHIPS = ["Father", "Mother", "Brother", "Sister", "Friend", "Relative", "Other"];
+const RELATIONSHIPS = ["Father", "Mother", "Husband", "Wife", "Brother", "Sister", "Friend", "Relative", "Other"];
 
 export default function RequestBlood() {
   const insets = useSafeAreaInsets();
@@ -23,7 +25,7 @@ export default function RequestBlood() {
   const [f, setF] = useState<any>({
     patient_name: "", blood_group: "B+", units_required: "1",
     hospital_name: "", hospital_area: "", hospital_city: "",
-    required_date: new Date().toISOString().slice(0, 10), required_time: "", urgency: "Normal",
+    required_date: formatDateToDDMMYYYY(new Date()), required_time: "", urgency: "Normal",
     requester_name: "", requester_mobile: "", requester_email: "", relationship: "Father",
     additional_message: "", hospital_contact: "",
   });
@@ -54,7 +56,8 @@ export default function RequestBlood() {
     setLoading(true);
     try {
       const cleanMobile = (f.requester_mobile || "").replace(/\D/g, "").slice(-10);
-      const payload = { ...f, requester_mobile: cleanMobile, units_required: parseInt(f.units_required, 10) || 1, requester_email: f.requester_email || null };
+      const isoRequiredDate = formatDateToYYYYMMDD(f.required_date) || f.required_date;
+      const payload = { ...f, required_date: isoRequiredDate, requester_mobile: cleanMobile, units_required: parseInt(f.units_required, 10) || 1, requester_email: f.requester_email || null };
       const r: any = await api("/blood-requests", { body: payload });
       const reqId = r?.request_id || r?.request_number || r?.request?.request_number || r?.id || "Submitted";
 
@@ -117,7 +120,14 @@ export default function RequestBlood() {
         <Input testID="hospital-input" label="Hospital Name" value={f.hospital_name} onChangeText={(v) => set("hospital_name", v)} />
         <Input testID="hospital-area-input" label="Hospital Area" value={f.hospital_area} onChangeText={(v) => set("hospital_area", v)} />
         <Input testID="hospital-city-input" label="Hospital City" value={f.hospital_city} onChangeText={(v) => set("hospital_city", v)} />
-        <Input testID="req-date-input" label="Required Date (YYYY-MM-DD)" value={f.required_date} onChangeText={(v) => set("required_date", v)} />
+        <DatePickerField
+          testID="req-date-input"
+          label="Required Date (DD-MM-YYYY)"
+          value={f.required_date}
+          onChange={(ddmmyyyy) => set("required_date", ddmmyyyy)}
+          placeholder="DD-MM-YYYY"
+          minDate={new Date()}
+        />
         <Input testID="req-time-input" label="Required Time (optional)" value={f.required_time} onChangeText={(v) => set("required_time", v)} placeholder="e.g. 10:30 AM" />
 
         <Text style={styles.label}>Urgency</Text>

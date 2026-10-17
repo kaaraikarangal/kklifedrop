@@ -43,6 +43,17 @@ OTP_LENGTH = int(os.environ.get("OTP_LENGTH", "6"))
 OTP_EXP_MINUTES = int(os.environ.get("OTP_EXP_MINUTES", "5"))
 OTP_MAX_ATTEMPTS = int(os.environ.get("OTP_MAX_ATTEMPTS", "5"))
 DONATION_MIN_INTERVAL_DAYS = int(os.environ.get("DONATION_MIN_INTERVAL_DAYS", "90"))
+DONATION_MIN_INTERVAL_DAYS_MALE = int(os.environ.get("DONATION_MIN_INTERVAL_DAYS_MALE", "90"))
+DONATION_MIN_INTERVAL_DAYS_FEMALE = int(os.environ.get("DONATION_MIN_INTERVAL_DAYS_FEMALE", "120"))
+
+
+def get_donation_interval_days(gender: Optional[str] = None) -> int:
+    if not gender:
+        return DONATION_MIN_INTERVAL_DAYS_MALE
+    g = str(gender).strip().lower()
+    if g in ("female", "f"):
+        return DONATION_MIN_INTERVAL_DAYS_FEMALE
+    return DONATION_MIN_INTERVAL_DAYS_MALE
 
 _raw_keys = [k.strip() for k in os.environ.get("AADHAAR_FERNET_KEY", "").split(",") if k.strip()]
 _valid_fernets = []
@@ -382,10 +393,27 @@ class VerifyOtpIn(BaseModel):
         return re.sub(r"\D", "", v)[-10:]
 
 
+def normalize_date_str(v: Optional[str]) -> Optional[str]:
+    if not v:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    dmy = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", s)
+    if dmy:
+        day, month, year = dmy.groups()
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    iso = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", s)
+    if iso:
+        year, month, day = iso.groups()
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    return s
+
+
 class DonorRegistrationIn(BaseModel):
     full_name: str
     gender: Literal["Male", "Female", "Other"]
-    date_of_birth: str  # YYYY-MM-DD
+    date_of_birth: str  # DD-MM-YYYY or YYYY-MM-DD
     blood_group: Literal["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
     email: EmailStr
     mobile: str
@@ -399,6 +427,16 @@ class DonorRegistrationIn(BaseModel):
     donation_opt_in: bool
     last_donation_date: Optional[str] = None
     consent: bool
+
+    @field_validator("date_of_birth", mode="before")
+    @classmethod
+    def _norm_dob(cls, v: str) -> str:
+        return normalize_date_str(v) or v
+
+    @field_validator("last_donation_date", mode="before")
+    @classmethod
+    def _norm_ld(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_date_str(v)
 
     @field_validator("aadhaar")
     @classmethod
@@ -430,6 +468,16 @@ class DonorUpdateIn(BaseModel):
     pincode: Optional[str] = None
     aadhaar: Optional[str] = None
 
+    @field_validator("date_of_birth", mode="before")
+    @classmethod
+    def _norm_dob(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_date_str(v)
+
+    @field_validator("last_donation_date", mode="before")
+    @classmethod
+    def _norm_ld(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_date_str(v)
+
     @field_validator("aadhaar")
     @classmethod
     def valid_update_aadhaar(cls, v: Optional[str]) -> Optional[str]:
@@ -450,6 +498,11 @@ class BloodRequestIn(BaseModel):
     hospital_city: str
     required_date: str
     required_time: Optional[str] = None
+
+    @field_validator("required_date", mode="before")
+    @classmethod
+    def _norm_rd(cls, v: str) -> str:
+        return normalize_date_str(v) or v
     urgency: Literal["Normal", "Urgent", "Emergency"]
     requester_name: str
     requester_mobile: str
@@ -528,36 +581,43 @@ class AdminDonorUpdateIn(BaseModel):
 # ---------------------------------------------------------------------------
 def get_donor_cooldown(donor: dict) -> dict:
     """
-    Computes 3-month (DONATION_MIN_INTERVAL_DAYS = 90 days) medical rest status.
+    Computes medical rest status:
+    - Male: 90 days (3 months)
+    - Female: 120 days (4 months)
+    - Other/Default: 90 days
     Donors in this cooldown are legally and medically non-notifiable.
     """
     last = donor.get("last_donation_date")
+    interval_days = get_donation_interval_days(donor.get("gender"))
     if not last:
         return {
             "in_cooldown": False,
             "cooldown_days_left": 0,
             "cooldown_end_date": None,
             "last_donation_date": None,
+            "cooldown_total_days": interval_days,
         }
     try:
         last_str = str(last)[:10]
         d = date.fromisoformat(last_str)
         today = datetime.now(timezone.utc).date()
         days_passed = (today - d).days
-        if 0 <= days_passed < DONATION_MIN_INTERVAL_DAYS:
-            days_left = DONATION_MIN_INTERVAL_DAYS - days_passed
-            end_date = (d + timedelta(days=DONATION_MIN_INTERVAL_DAYS)).isoformat()
+        if 0 <= days_passed < interval_days:
+            days_left = interval_days - days_passed
+            end_date = (d + timedelta(days=interval_days)).isoformat()
             return {
                 "in_cooldown": True,
                 "cooldown_days_left": days_left,
                 "cooldown_end_date": end_date,
                 "last_donation_date": last_str,
+                "cooldown_total_days": interval_days,
             }
         return {
             "in_cooldown": False,
             "cooldown_days_left": 0,
             "cooldown_end_date": None,
             "last_donation_date": last_str,
+            "cooldown_total_days": interval_days,
         }
     except Exception:
         return {
@@ -565,6 +625,7 @@ def get_donor_cooldown(donor: dict) -> dict:
             "cooldown_days_left": 0,
             "cooldown_end_date": None,
             "last_donation_date": str(last)[:10] if last else None,
+            "cooldown_total_days": interval_days,
         }
 
 
@@ -598,6 +659,7 @@ def to_public_donor(doc: dict) -> dict:
         "in_cooldown": cooldown["in_cooldown"],
         "cooldown_days_left": cooldown["cooldown_days_left"],
         "cooldown_end_date": cooldown["cooldown_end_date"],
+        "cooldown_total_days": cooldown.get("cooldown_total_days", 90),
         "is_eligible": is_eligible(doc),
         "masked_aadhaar": doc.get("masked_aadhaar"),
         "created_at": iso(doc.get("created_at")) if isinstance(doc.get("created_at"), datetime) else doc.get("created_at"),
@@ -676,6 +738,8 @@ async def meta():
         "urgency": URGENCY,
         "request_statuses": REQUEST_STATUSES,
         "min_donation_interval_days": DONATION_MIN_INTERVAL_DAYS,
+        "min_donation_interval_days_male": DONATION_MIN_INTERVAL_DAYS_MALE,
+        "min_donation_interval_days_female": DONATION_MIN_INTERVAL_DAYS_FEMALE,
     }
 
 
@@ -1224,7 +1288,7 @@ async def notify_donors(req_id: str, body: NotifyIn, admin: dict = Depends(curre
         if not eligible and resting:
             raise HTTPException(
                 400,
-                f"Selected donor(s) donated blood within the last 3 months and are protected under medical rest cooldown."
+                f"Selected donor(s) donated blood recently and are protected under medical rest cooldown (90 days for males / 120 days for females)."
             )
         donors = eligible
     else:
@@ -1591,6 +1655,8 @@ async def admin_update_donor(donor_id: str, body: AdminDonorUpdateIn, admin: dic
             "metadata": {"masked": mask_aadhaar(data["aadhaar"]), "reason": "rekey_reencrypt"},
         }).execute()
     if "last_donation_date" in data:
+        donor_gender = r.data[0].get("gender") if r.data else None
+        donor_cooldown = get_donation_interval_days(donor_gender)
         await sb.table("audit_logs").insert({
             "id": gen_id(),
             "admin_id": admin.get("sub"),
@@ -1598,7 +1664,7 @@ async def admin_update_donor(donor_id: str, body: AdminDonorUpdateIn, admin: dic
             "target_type": "donor",
             "target_id": donor_id,
             "timestamp": iso(now_utc()),
-            "metadata": {"last_donation_date": data["last_donation_date"], "cooldown_days": DONATION_MIN_INTERVAL_DAYS},
+            "metadata": {"last_donation_date": data["last_donation_date"], "cooldown_days": donor_cooldown},
         }).execute()
     return {"ok": True, "donor": to_admin_donor(r.data[0])}
 
@@ -1618,13 +1684,15 @@ async def admin_update_status(req_id: str, body: UpdateRequestStatusIn, admin: d
         if actual_id:
             await sb.table("notifications").delete().eq("request_id", actual_id).execute()
 
-    # If fulfilled by a registered donor, update their last_donation_date to start their 3-month cooldown
+    # If fulfilled by a registered donor, update their last_donation_date to start their rest cooldown
     if body.fulfilled_by_donor_id:
         d_date = body.donation_date or datetime.now(timezone.utc).date().isoformat()
-        await sb.table("donors").update({
+        donor_res = await sb.table("donors").update({
             "last_donation_date": d_date,
             "updated_at": iso(now_utc()),
         }).eq("id", body.fulfilled_by_donor_id).execute()
+        f_gender = donor_res.data[0].get("gender") if donor_res.data else None
+        donor_cooldown = get_donation_interval_days(f_gender)
 
         await sb.table("audit_logs").insert({
             "id": gen_id(),
@@ -1633,7 +1701,7 @@ async def admin_update_status(req_id: str, body: UpdateRequestStatusIn, admin: d
             "target_type": "donor",
             "target_id": body.fulfilled_by_donor_id,
             "timestamp": iso(now_utc()),
-            "metadata": {"request_id": req_id, "donation_date": d_date, "cooldown_days": DONATION_MIN_INTERVAL_DAYS},
+            "metadata": {"request_id": req_id, "donation_date": d_date, "cooldown_days": donor_cooldown},
         }).execute()
 
     return {"ok": True, "status": body.status}
@@ -1674,8 +1742,8 @@ HTML_TERMS = """<!DOCTYPE html>
     <h2>1. Voluntary & Non-Commercial Nature</h2>
     <p>KK Life Drop is a voluntary community service bridge connecting verified blood donors with patients in emergency need. Under Section 19 of the National Blood Transfusion Council (NBTC) guidelines and the Drugs and Cosmetics Act, all blood donations are strictly voluntary. <strong>Commercial sale, purchase, or monetary remuneration of any kind for blood or platelets is strictly prohibited.</strong></p>
 
-    <h2>2. Medical Eligibility & 90-Day Cooldown</h2>
-    <p>Donors must be 18 to 65 years of age, weigh at least 45 kg, and observe a mandatory 90-day cooldown between whole-blood donations. Medical eligibility and cross-matching are confirmed by licensed medical officers at the treating hospital.</p>
+    <h2>2. Medical Eligibility & Rest Deferral Period</h2>
+    <p>Donors must be 18 to 65 years of age, weigh at least 45 kg, and observe a mandatory medical deferral period between whole-blood donations (90 days for males and 120 days for females). Medical eligibility and cross-matching are confirmed by licensed medical officers at the treating hospital.</p>
 
     <h2>3. Disclaimer of Medical Liability</h2>
     <p>KK Life Drop is an emergency communication network and does not collect, test, or store physical blood. Final responsibility for blood transfusion, serological screening, and medical treatment rests exclusively with the authorized hospital or blood bank.</p>
@@ -1722,7 +1790,7 @@ HTML_PRIVACY = """<!DOCTYPE html>
       <li><strong>Mobile Number:</strong> Required for secure One-Time Password (OTP) verification and emergency contact.</li>
       <li><strong>Aadhaar Number:</strong> Collected for identity verification and anti-fraud purposes. In compliance with UIDAI guidelines, all Aadhaar numbers are encrypted at rest with military-grade 256-bit AES/Fernet encryption and masked as XXXX-XXXX-****.</li>
       <li><strong>Device Push Token:</strong> Used to dispatch background lock-screen notifications for nearby urgent blood requests.</li>
-      <li><strong>Donation History:</strong> Stored to enforce the mandatory 90-day medical rest cooldown.</li>
+      <li><strong>Donation History:</strong> Stored to enforce the mandatory medical rest cooldown (90 days for males / 120 days for females).</li>
     </ul>
 
     <h2>2. How We Use Data</h2>

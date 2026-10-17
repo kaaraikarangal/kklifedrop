@@ -25,6 +25,8 @@ import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
 import * as Notifications from "expo-notifications";
 import { syncPushTokenWithBackend, sendTestLocalNotification, EMERGENCY_CHANNEL_ID } from "@/src/notifications";
+import { DatePickerField } from "@/src/components/DatePickerField";
+import { formatDateToDDMMYYYY, formatDateToYYYYMMDD } from "@/src/utils/dateUtils";
 
 type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "subadmins" | "audit";
 
@@ -693,7 +695,7 @@ export default function AdminHome() {
     setDonationModal({
       open: true,
       donor: d,
-      dateInput: d.last_donation_date ? String(d.last_donation_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
+      dateInput: d.last_donation_date ? formatDateToDDMMYYYY(d.last_donation_date) : formatDateToDDMMYYYY(new Date()),
       submitting: false,
     });
   }
@@ -702,16 +704,20 @@ export default function AdminHome() {
     if (!donationModal.donor) return;
     setDonationModal((prev) => ({ ...prev, submitting: true }));
     try {
+      const isoDate = dateVal ? (formatDateToYYYYMMDD(dateVal) || dateVal) : null;
       await api(`/admin/donors/${donationModal.donor.id}`, {
         auth: true,
         method: "PATCH",
-        body: { last_donation_date: dateVal },
+        body: { last_donation_date: isoDate },
       });
       if (dateVal) {
+        const isFemale = donationModal.donor?.gender === "Female";
+        const cooldownDays = isFemale ? 120 : 90;
+        const cooldownPeriodStr = isFemale ? "4-month (120 days)" : "3-month (90 days)";
         toast(
           "success",
           "Donation Recorded",
-          `${donationModal.donor.full_name} is now protected under 3-month rest cooldown (cannot be notified for 90 days).`
+          `${donationModal.donor.full_name} is now protected under ${cooldownPeriodStr} rest cooldown (cannot be notified for ${cooldownDays} days).`
         );
       } else {
         toast("info", "Donation Cleared", `${donationModal.donor.full_name}'s cooldown has been cleared.`);
@@ -751,7 +757,7 @@ export default function AdminHome() {
         "success",
         "Request Fulfilled",
         fulfillModal.donorId
-          ? "Blood request fulfilled and fulfilling donor is entered into 3-month rest cooldown."
+          ? "Blood request fulfilled and fulfilling donor is entered into medical rest cooldown (90 days for males / 120 days for females)."
           : "Request marked as fulfilled."
       );
       setFulfillModal({ open: false, donationDate: new Date().toISOString().slice(0, 10) });
@@ -1374,7 +1380,7 @@ export default function AdminHome() {
                           <View style={styles.ineligibleTagPill}>
                             <Ionicons name="arrow-down" size={10} color="#92400E" />
                             <Text style={styles.ineligibleTagPillText}>
-                              {d.in_cooldown ? "ON 3-MO REST" : d.availability !== "Available" ? "UNAVAILABLE" : "SUSPENDED"}
+                              {d.in_cooldown ? (d.gender === "Female" ? "ON 4-MO REST" : "ON 3-MO REST") : d.availability !== "Available" ? "UNAVAILABLE" : "SUSPENDED"}
                             </Text>
                           </View>
                         ) : null}
@@ -2671,7 +2677,7 @@ export default function AdminHome() {
                               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                                 <Ionicons name="shield-checkmark" size={14} color="#D97706" />
                                 <Text style={styles.matchRestSectionTitle}>
-                                  3-MONTH MEDICAL REST PERIOD ({matchModal.data.resting_donors.length})
+                                  MEDICAL REST PERIOD ({matchModal.data.resting_donors.length})
                                 </Text>
                               </View>
                               <View style={styles.restBadgeTag}>
@@ -2681,7 +2687,7 @@ export default function AdminHome() {
                             </View>
 
                             <Text style={styles.matchRestSectionDesc}>
-                              These donors donated blood recently and are legally protected under the mandatory 90-day rest rule. Notifications are disabled to safeguard donor health.
+                              These donors donated blood recently and are legally protected under the mandatory rest rule (90 days for males / 120 days for females). Notifications are disabled to safeguard donor health.
                             </Text>
 
                             {matchModal.data.resting_donors.map((d: any) => (
@@ -2770,14 +2776,14 @@ export default function AdminHome() {
             <View style={styles.donationRuleNotice}>
               <Ionicons name="information-circle" size={16} color="#B45309" />
               <Text style={styles.donationRuleText}>
-                Medical Rule: After blood donation, a donor enters a mandatory 3-month (90 days) rest period and will NOT receive any donation notifications.
+                Medical Rule: After blood donation, a donor enters a mandatory rest period (90 days for males / 120 days for females) and will NOT receive any donation notifications.
               </Text>
             </View>
 
             <View style={styles.quickPresetRow}>
               <Pressable
                 style={styles.quickPresetBtn}
-                onPress={() => setDonationModal((prev) => ({ ...prev, dateInput: new Date().toISOString().slice(0, 10) }))}
+                onPress={() => setDonationModal((prev) => ({ ...prev, dateInput: formatDateToDDMMYYYY(new Date()) }))}
               >
                 <Ionicons name="today-outline" size={13} color={colors.brandPrimary} />
                 <Text style={styles.quickPresetBtnText}>Donated Today</Text>
@@ -2788,7 +2794,7 @@ export default function AdminHome() {
                 onPress={() => {
                   const d = new Date();
                   d.setMonth(d.getMonth() - 1);
-                  setDonationModal((prev) => ({ ...prev, dateInput: d.toISOString().slice(0, 10) }));
+                  setDonationModal((prev) => ({ ...prev, dateInput: formatDateToDDMMYYYY(d) }));
                 }}
               >
                 <Ionicons name="calendar-outline" size={13} color="#475569" />
@@ -2800,7 +2806,7 @@ export default function AdminHome() {
                 onPress={() => {
                   const d = new Date();
                   d.setMonth(d.getMonth() - 2);
-                  setDonationModal((prev) => ({ ...prev, dateInput: d.toISOString().slice(0, 10) }));
+                  setDonationModal((prev) => ({ ...prev, dateInput: formatDateToDDMMYYYY(d) }));
                 }}
               >
                 <Ionicons name="calendar-outline" size={13} color="#475569" />
@@ -2808,14 +2814,14 @@ export default function AdminHome() {
               </Pressable>
             </View>
 
-            <View style={styles.rekeyInputWrap}>
-              <Text style={styles.rekeyInputLabel}>Donation Date (YYYY-MM-DD):</Text>
-              <TextInput
-                style={styles.rekeyTextInput}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#94A3B8"
+            <View style={{ width: "100%", marginVertical: 8 }}>
+              <DatePickerField
+                testID="admin-donation-date"
+                label="Donation Date (DD-MM-YYYY)"
                 value={donationModal.dateInput}
-                onChangeText={(val) => setDonationModal((prev) => ({ ...prev, dateInput: val }))}
+                onChange={(ddmmyyyy) => setDonationModal((prev) => ({ ...prev, dateInput: ddmmyyyy }))}
+                placeholder="DD-MM-YYYY"
+                maxDate={new Date()}
               />
             </View>
 
@@ -2908,7 +2914,7 @@ export default function AdminHome() {
               <View style={styles.fulfillCooldownNotice}>
                 <Ionicons name="shield-checkmark" size={15} color="#D97706" />
                 <Text style={styles.fulfillCooldownText}>
-                  Selected donor will automatically enter a 3-month medical rest cooldown starting today. They will not be notified for 90 days.
+                  Selected donor will automatically enter a medical rest cooldown (90 days for males / 120 days for females) starting today. They will not be notified during this period.
                 </Text>
               </View>
             ) : null}

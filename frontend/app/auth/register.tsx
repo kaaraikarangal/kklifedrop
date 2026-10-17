@@ -11,6 +11,8 @@ import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { LocationSelector } from "@/src/components/LocationSelector";
+import { DatePickerField } from "@/src/components/DatePickerField";
+import { formatDateToYYYYMMDD } from "@/src/utils/dateUtils";
 
 const GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const GENDERS = ["Male", "Female", "Other"];
@@ -20,7 +22,7 @@ export default function Register() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(false);
   const [f, setF] = useState<any>({
-    full_name: "", gender: "Male", date_of_birth: "1995-01-01", blood_group: "B+",
+    full_name: "", gender: "Male", date_of_birth: "01-01-1995", blood_group: "B+",
     email: "", mobile, area: "", place: "", district: "Karaikal", state: "Puducherry", pincode: "",
     aadhaar: "", availability: "Available", donation_opt_in: true,
     last_donation_date: "", consent: false,
@@ -37,7 +39,11 @@ export default function Register() {
 
     setLoading(true);
     try {
-      const payload = { ...f, last_donation_date: f.last_donation_date || null };
+      const payload = {
+        ...f,
+        date_of_birth: formatDateToYYYYMMDD(f.date_of_birth),
+        last_donation_date: f.last_donation_date ? formatDateToYYYYMMDD(f.last_donation_date) : null,
+      };
       await api("/donors", { auth: true, body: payload });
       syncPushTokenWithBackend().catch(() => {});
       toast("success", "Registered", "Welcome to KK Life Drop!");
@@ -67,7 +73,14 @@ export default function Register() {
           ))}
         </View>
 
-        <Input testID="dob-input" label="Date of Birth (YYYY-MM-DD)" value={f.date_of_birth} onChangeText={(v) => set("date_of_birth", v)} placeholder="1995-01-15" />
+        <DatePickerField
+          testID="dob-input"
+          label="Date of Birth (DD-MM-YYYY)"
+          value={f.date_of_birth}
+          onChange={(ddmmyyyy) => set("date_of_birth", ddmmyyyy)}
+          placeholder="DD-MM-YYYY"
+          maxDate={new Date()}
+        />
 
         <Text style={styles.label}>Blood Group</Text>
         <View style={styles.bgGrid}>
@@ -113,7 +126,16 @@ export default function Register() {
             </Pressable>
           ))}
         </View>
-        <Input testID="last-donation-input" label="Last Blood Donation Date (optional)" value={f.last_donation_date} onChangeText={(v) => set("last_donation_date", v)} placeholder="YYYY-MM-DD" />
+        <DatePickerField
+          testID="last-donation-input"
+          label="Last Blood Donation Date (DD-MM-YYYY) (optional)"
+          value={f.last_donation_date}
+          onChange={(ddmmyyyy) => set("last_donation_date", ddmmyyyy)}
+          placeholder="DD-MM-YYYY"
+          allowClear
+          onClear={() => set("last_donation_date", "")}
+          maxDate={new Date()}
+        />
 
         <View style={styles.toggleRow}>
           <View style={{ flex: 1 }}>

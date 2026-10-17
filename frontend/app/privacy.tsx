@@ -53,14 +53,14 @@ export default function PrivacyPolicy() {
           <Bullet title="Phone Number" text="Collected for secure One-Time Password (OTP) verification and critical emergency blood coordination." />
           <Bullet title="Identity Verification (Aadhaar)" text="Collected strictly for identity integrity. In compliance with UIDAI standards, numbers are encrypted at rest with AES-256 keys and masked in the public directory (XXXX-XXXX-****)." />
           <Bullet title="Device Push Token" text="Optional push notification token to alert you of urgent nearby blood emergencies even when the app is closed." />
-          <Bullet title="Donation History" text="Date of last donation to enforce the mandatory 90-day medical rest interval." />
+          <Bullet title="Donation History" text="Date of last donation to enforce the mandatory medical rest interval (90 days for males / 120 days for females)." />
 
           <SectionTitle number="2" title="How We Use Your Data" />
           <Text style={styles.p}>
             Your data is used strictly for non-commercial public health facilitation:
           </Text>
           <Bullet title="Emergency Matching" text="Connecting patients needing life-saving blood transfusions with nearby eligible voluntary donors." />
-          <Bullet title="Medical Rest Protection" text="Preventing over-donation by automatically cooling down donors for 90 days after each donation." />
+          <Bullet title="Medical Rest Protection" text="Preventing over-donation by automatically cooling down donors (90 days for males / 120 days for females) after each donation." />
           <Bullet title="Emergency Push Notifications" text="Dispatching targeted notifications for urgent blood shortages matching your blood group and region." />
           <Text style={styles.p}>
             <Text style={styles.bold}>We NEVER sell, rent, or trade your personal information with third-party advertisers or commercial brokers.</Text>

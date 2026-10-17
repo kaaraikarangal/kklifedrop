@@ -21,6 +21,12 @@ import { Input } from "@/src/Input";
 import { toast } from "@/src/Toast";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { LocationSelector } from "@/src/components/LocationSelector";
+import { DatePickerField } from "@/src/components/DatePickerField";
+import {
+  formatDateToDDMMYYYY,
+  formatDateToYYYYMMDD,
+  isValidDDMMYYYY,
+} from "@/src/utils/dateUtils";
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const GENDERS = ["Male", "Female", "Other"];
@@ -63,7 +69,7 @@ export default function EditProfile() {
           setF({
             full_name: d.full_name || "",
             gender: d.gender || "Male",
-            date_of_birth: d.date_of_birth || "",
+            date_of_birth: formatDateToDDMMYYYY(d.date_of_birth),
             blood_group: d.blood_group || "B+",
             email: d.email || "",
             mobile: d.mobile || "",
@@ -74,7 +80,7 @@ export default function EditProfile() {
             pincode: d.pincode || "",
             masked_aadhaar: d.masked_aadhaar || "XXXX XXXX ****",
             new_aadhaar: "",
-            last_donation_date: d.last_donation_date || "",
+            last_donation_date: formatDateToDDMMYYYY(d.last_donation_date),
             availability: d.availability || "Available",
             donation_opt_in: d.donation_opt_in ?? true,
           });
@@ -118,15 +124,13 @@ export default function EditProfile() {
       }
     }
     if (f.date_of_birth?.trim()) {
-      const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dobRegex.test(f.date_of_birth.trim())) {
-        return toast("error", "Invalid Date of Birth", "Please format as YYYY-MM-DD.");
+      if (!isValidDDMMYYYY(f.date_of_birth.trim()) && !/^\d{4}-\d{2}-\d{2}$/.test(f.date_of_birth.trim())) {
+        return toast("error", "Invalid Date of Birth", "Please format as DD-MM-YYYY.");
       }
     }
     if (f.last_donation_date?.trim()) {
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(f.last_donation_date.trim())) {
-        return toast("error", "Invalid Donation Date", "Please format as YYYY-MM-DD.");
+      if (!isValidDDMMYYYY(f.last_donation_date.trim()) && !/^\d{4}-\d{2}-\d{2}$/.test(f.last_donation_date.trim())) {
+        return toast("error", "Invalid Donation Date", "Please format as DD-MM-YYYY.");
       }
     }
 
@@ -135,7 +139,7 @@ export default function EditProfile() {
       const payload: any = {
         full_name: f.full_name.trim(),
         gender: f.gender,
-        date_of_birth: f.date_of_birth?.trim() || null,
+        date_of_birth: f.date_of_birth?.trim() ? formatDateToYYYYMMDD(f.date_of_birth.trim()) : null,
         blood_group: f.blood_group,
         email: f.email?.trim() || null,
         area: f.area.trim(),
@@ -145,7 +149,7 @@ export default function EditProfile() {
         pincode: f.pincode.replace(/\D/g, ""),
         availability: f.availability,
         donation_opt_in: f.donation_opt_in,
-        last_donation_date: f.last_donation_date?.trim() || null,
+        last_donation_date: f.last_donation_date?.trim() ? formatDateToYYYYMMDD(f.last_donation_date.trim()) : null,
       };
 
       if (f.new_aadhaar?.trim()) {
@@ -265,12 +269,13 @@ export default function EditProfile() {
             ))}
           </View>
 
-          <Input
+          <DatePickerField
             testID="edit-dob-input"
-            label="Date of Birth (YYYY-MM-DD)"
+            label="Date of Birth (DD-MM-YYYY)"
             value={f.date_of_birth}
-            onChangeText={(v) => setField("date_of_birth", v)}
-            placeholder="e.g. 1996-05-18"
+            onChange={(ddmmyyyy) => setField("date_of_birth", ddmmyyyy)}
+            placeholder="DD-MM-YYYY"
+            maxDate={new Date()}
           />
 
           <Text style={styles.fieldLabel}>Blood Group *</Text>
@@ -351,24 +356,18 @@ export default function EditProfile() {
         {/* SECTION 5: Medical & History */}
         <Text style={styles.sectionHeader}>Donation History</Text>
         <View style={styles.card}>
-          <Input
+          <DatePickerField
             testID="edit-last-donation-input"
-            label="Last Blood Donation Date (YYYY-MM-DD)"
+            label="Last Blood Donation Date (DD-MM-YYYY)"
             value={f.last_donation_date}
-            onChangeText={(v) => setField("last_donation_date", v)}
-            placeholder="e.g. 2026-06-15"
+            onChange={(ddmmyyyy) => setField("last_donation_date", ddmmyyyy)}
+            placeholder="DD-MM-YYYY"
+            allowClear
+            onClear={() => setField("last_donation_date", "")}
+            maxDate={new Date()}
           />
-          {f.last_donation_date ? (
-            <Pressable
-              onPress={() => setField("last_donation_date", "")}
-              style={styles.clearDateBtn}
-            >
-              <Ionicons name="close-circle-outline" size={14} color="#EF4444" />
-              <Text style={styles.clearDateText}>Clear Last Donation Date</Text>
-            </Pressable>
-          ) : null}
           <Text style={styles.hintText}>
-            ℹ️ KK Life Drop enforces a mandatory 90-day rest cooldown between donations to safeguard donor health.
+            ℹ️ KK Life Drop enforces a mandatory rest cooldown between donations (90 days for males / 120 days for females) to safeguard donor health.
           </Text>
         </View>
 

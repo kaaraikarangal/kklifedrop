@@ -15,6 +15,12 @@ import {
 } from "@/src/pending-notifications";
 import { syncPushTokenWithBackend } from "@/src/notifications";
 
+import {
+  BLOOD_FREQUENCY_DATA,
+  DID_YOU_KNOW_HIGHLIGHTS,
+  BLOOD_FACT_CATEGORIES,
+} from "@/src/data/bloodFactsData";
+
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 
 interface UserStats {
@@ -41,6 +47,12 @@ export default function Home() {
   const [pendingCount, setPendingCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [factIdx, setFactIdx] = useState(0);
+  const currentFact = DID_YOU_KNOW_HIGHLIGHTS[factIdx] || DID_YOU_KNOW_HIGHLIGHTS[0];
+
+  const nextFact = () => {
+    setFactIdx((prev) => (prev + 1) % DID_YOU_KNOW_HIGHLIGHTS.length);
+  };
 
   // Prevent hardware back press from navigating back to the guest Landing page
   useFocusEffect(
@@ -259,13 +271,44 @@ export default function Home() {
 
         {/* Quick actions */}
         <View style={styles.quick}>
-          <Pressable testID="home-donate-cta" style={[styles.quickCard, { backgroundColor: colors.brandPrimary }]} onPress={() => router.push("/(tabs)/profile")}>
-            <Ionicons name="water" size={26} color="#FFFFFF" />
+          <Pressable
+            testID="home-donate-cta"
+            style={[styles.quickCard, { backgroundColor: colors.brandPrimary, overflow: "hidden" }]}
+            onPress={() => router.push("/(tabs)/profile")}
+          >
+            <LinearGradient
+              colors={["#E11D48", "#BE123C"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Ionicons name="water" size={26} color="#FFFFFF" />
+              <View style={[styles.quickBadge, { backgroundColor: "rgba(255, 255, 255, 0.2)" }]}>
+                <Text style={styles.quickBadgeText}>LIFESAVER</Text>
+              </View>
+            </View>
             <Text style={styles.quickTitle}>Donate Blood</Text>
             <Text style={styles.quickSub}>Manage availability</Text>
           </Pressable>
-          <Pressable testID="home-request-cta" style={[styles.quickCard, { backgroundColor: colors.surfaceInverse }]} onPress={() => router.push("/request-blood")}>
-            <Ionicons name="alert-circle" size={26} color="#FFFFFF" />
+
+          <Pressable
+            testID="home-request-cta"
+            style={[styles.quickCard, { backgroundColor: "#DC2626", overflow: "hidden" }]}
+            onPress={() => router.push("/request-blood")}
+          >
+            <LinearGradient
+              colors={["#DC2626", "#B91C1C"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Ionicons name="alert-circle" size={26} color="#FFFFFF" />
+              <View style={[styles.quickBadge, { backgroundColor: "rgba(255, 255, 255, 0.25)" }]}>
+                <Text style={styles.quickBadgeText}>EMERGENCY</Text>
+              </View>
+            </View>
             <Text style={styles.quickTitle}>Request Blood</Text>
             <Text style={styles.quickSub}>Submit urgent request</Text>
           </Pressable>
@@ -339,6 +382,212 @@ export default function Home() {
               </Pressable>
             );
           })}
+        </View>
+
+        {/* ========================================================================= */}
+        {/* BLOOD DONATION FACTS & FREQUENCY SECTION */}
+        {/* ========================================================================= */}
+        <View style={styles.sectionHead}>
+          <View>
+            <Text style={styles.sectionTitle}>Blood Donation Facts</Text>
+            <Text style={styles.sectionSub}>Clinical science, donor impact & demographic frequency</Text>
+          </View>
+          <Pressable onPress={() => router.push("/blood-facts")} testID="home-view-all-facts-btn">
+            <Text style={styles.link}>View All (9) ›</Text>
+          </Pressable>
+        </View>
+
+        {/* DID YOU KNOW? INTERACTIVE FACT CARD */}
+        <View style={styles.factCardWrap}>
+          <LinearGradient
+            colors={["#FFFFFF", "#F8FAFC"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.factCard}
+          >
+            <View style={styles.factCardTop}>
+              <View style={[styles.factTagBadge, { backgroundColor: currentFact.accent + "18" }]}>
+                <Ionicons name={currentFact.icon as any} size={14} color={currentFact.accent} />
+                <Text style={[styles.factTagText, { color: currentFact.accent }]}>
+                  DID YOU KNOW? • {currentFact.tag.toUpperCase()}
+                </Text>
+              </View>
+
+              <Pressable
+                style={styles.nextFactBtn}
+                onPress={nextFact}
+                testID="home-next-fact-btn"
+                accessibilityLabel="Next blood donation fact"
+              >
+                <Text style={styles.nextFactBtnText}>Next Fact</Text>
+                <Ionicons name="refresh" size={13} color={colors.brandPrimary} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.factHeadline}>{currentFact.headline}</Text>
+            <Text style={styles.factBody}>{currentFact.body}</Text>
+
+            <View style={styles.factCardFooter}>
+              <View style={styles.factIndicatorRow}>
+                {DID_YOU_KNOW_HIGHLIGHTS.map((_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.factDot,
+                      i === factIdx && styles.factDotActive,
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <Pressable
+                style={styles.exploreFactsLink}
+                onPress={() => router.push("/blood-facts")}
+                testID="home-read-more-facts"
+              >
+                <Text style={styles.exploreFactsLinkText}>Explore 50+ Facts</Text>
+                <Ionicons name="chevron-forward" size={13} color={colors.brandPrimary} />
+              </Pressable>
+            </View>
+          </LinearGradient>
+        </View>
+
+        {/* FREQUENCY OF BLOOD TYPES TABLE CARD (Matching user's Friends2Support reference) */}
+        <View style={styles.frequencyCardWrap}>
+          <View style={styles.frequencyHeader}>
+            <View style={styles.freqIconCircle}>
+              <Ionicons name="stats-chart" size={16} color="#DC2626" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={styles.frequencyTitle}>Frequency of Blood Types</Text>
+              <Text style={styles.frequencySubtitle}>Population ratio of ABO and Rh groups</Text>
+            </View>
+            <Pressable
+              style={styles.matrixBtn}
+              onPress={() => router.push("/blood-facts")}
+            >
+              <Text style={styles.matrixBtnText}>Full Guide</Text>
+            </Pressable>
+          </View>
+
+          {/* 2-Column Comparison Table matching Friends2Support */}
+          <View style={styles.frequencyTable}>
+            {/* Header */}
+            <View style={styles.freqTableRowHead}>
+              <Text style={[styles.freqTableHeadCell, { flex: 1 }]}>Rh-POSITIVE</Text>
+              <View style={styles.freqTableVDivider} />
+              <Text style={[styles.freqTableHeadCell, { flex: 1 }]}>Rh-NEGATIVE</Text>
+            </View>
+
+            {/* Row 1: O+ vs O- */}
+            <View style={styles.freqTableRow}>
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#DC2626" }]}>
+                  <Text style={styles.miniBloodBadgeText}>O+</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 3</Text>
+              </Pressable>
+              <View style={styles.freqTableVDivider} />
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#D97706" }]}>
+                  <Text style={styles.miniBloodBadgeText}>O-</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 15</Text>
+              </Pressable>
+            </View>
+
+            {/* Row 2: A+ vs A- */}
+            <View style={[styles.freqTableRow, styles.freqTableRowAlt]}>
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#E11D48" }]}>
+                  <Text style={styles.miniBloodBadgeText}>A+</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 3</Text>
+              </Pressable>
+              <View style={styles.freqTableVDivider} />
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#EA580C" }]}>
+                  <Text style={styles.miniBloodBadgeText}>A-</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 16</Text>
+              </Pressable>
+            </View>
+
+            {/* Row 3: B+ vs B- */}
+            <View style={styles.freqTableRow}>
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#9333EA" }]}>
+                  <Text style={styles.miniBloodBadgeText}>B+</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 12</Text>
+              </Pressable>
+              <View style={styles.freqTableVDivider} />
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#0891B2" }]}>
+                  <Text style={styles.miniBloodBadgeText}>B-</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 67</Text>
+              </Pressable>
+            </View>
+
+            {/* Row 4: AB+ vs AB- */}
+            <View style={[styles.freqTableRow, styles.freqTableRowAlt, { borderBottomWidth: 0 }]}>
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#2563EB" }]}>
+                  <Text style={styles.miniBloodBadgeText}>AB+</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 29</Text>
+              </Pressable>
+              <View style={styles.freqTableVDivider} />
+              <Pressable
+                style={styles.freqTableCell}
+                onPress={() => router.push("/blood-facts")}
+              >
+                <View style={[styles.miniBloodBadge, { backgroundColor: "#4F46E5" }]}>
+                  <Text style={styles.miniBloodBadgeText}>AB-</Text>
+                </View>
+                <Text style={styles.freqRatioText}>1 person in 167</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {/* Quick Category Chips Strip */}
+          <View style={styles.categoriesQuickStrip}>
+            <Text style={styles.categoriesQuickLabel}>ALL 9 FACT CATEGORIES:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickChipsScroll}>
+              {BLOOD_FACT_CATEGORIES.map((cat) => (
+                <Pressable
+                  key={cat.id}
+                  style={styles.quickCatChip}
+                  onPress={() => router.push("/blood-facts")}
+                >
+                  <Ionicons name={cat.icon as any} size={11} color={cat.color} />
+                  <Text style={styles.quickCatChipText}>{cat.shortTitle}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
         </View>
 
         {/* BLOOD Acrostic Inspiration Banner */}
@@ -635,6 +884,22 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.lg,
     gap: 4,
+    shadowColor: "#DC2626",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  quickBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  quickBadgeText: {
+    fontSize: 8.5,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
   },
   quickTitle: {
     color: "#FFFFFF",
@@ -788,4 +1053,249 @@ const styles = StyleSheet.create({
     color: "rgba(255, 255, 255, 0.85)",
     marginTop: 1,
   },
+
+  /* Blood Facts & Frequency Styles */
+  factCardWrap: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  factCard: {
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: radius.lg,
+  },
+  factCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  factTagBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 5,
+  },
+  factTagText: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  nextFactBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  nextFactBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.brandPrimary,
+  },
+  factHeadline: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 4,
+    letterSpacing: -0.2,
+  },
+  factBody: {
+    fontSize: 12.5,
+    color: "#475569",
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  factCardFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  factIndicatorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  factDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#CBD5E1",
+  },
+  factDotActive: {
+    width: 14,
+    backgroundColor: colors.brandPrimary,
+  },
+  exploreFactsLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  exploreFactsLinkText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: colors.brandPrimary,
+  },
+
+  /* Frequency of Blood Types Table */
+  frequencyCardWrap: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  frequencyHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 10,
+    backgroundColor: "#FFFFFF",
+  },
+  freqIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  frequencyTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  frequencySubtitle: {
+    fontSize: 10.5,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  matrixBtn: {
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  matrixBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#16A34A",
+  },
+  frequencyTable: {
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  freqTableRowHead: {
+    flexDirection: "row",
+    backgroundColor: "#F8FAFC",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  freqTableHeadCell: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.5,
+  },
+  freqTableRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  freqTableRowAlt: {
+    backgroundColor: "#FAFAFA",
+  },
+  freqTableCell: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  freqTableVDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: "#E2E8F0",
+    marginHorizontal: 8,
+  },
+  miniBloodBadge: {
+    width: 26,
+    height: 20,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 6,
+  },
+  miniBloodBadgeText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
+  freqRatioText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#1E293B",
+  },
+  categoriesQuickStrip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#F8FAFC",
+  },
+  categoriesQuickLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  quickChipsScroll: {
+    gap: 6,
+  },
+  quickCatChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    gap: 4,
+  },
+  quickCatChipText: {
+    fontSize: 10.5,
+    fontWeight: "600",
+    color: "#334155",
+  },
 });
+
