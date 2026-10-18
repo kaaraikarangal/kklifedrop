@@ -20,6 +20,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { getActiveSession } from "@/src/api";
 import { BrandLogo } from "@/src/components/BrandLogo";
 import { BloodInspirationCard } from "@/src/components/BloodInspirationCard";
+import { KaaraiKarangalDonationModal } from "@/src/components/KaaraiKarangalDonationModal";
 
 const LOGO_FULL = require("@/assets/images/kk_life_drop_logo.png");
 const LOGO_SYMBOL = require("@/assets/images/kk_life_drop_symbol.png");
@@ -32,6 +33,8 @@ export default function Landing() {
   const [sessionChecking, setSessionChecking] = useState(true);
   const [isGuest, setIsGuest] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+  const [donationModalVisible, setDonationModalVisible] = useState(false);
+  const [donationAmount, setDonationAmount] = useState(500);
 
   // Splash Animation Values
   const splashOpacity = useRef(new Animated.Value(1)).current;
@@ -363,6 +366,52 @@ export default function Landing() {
           </View>
         </View>
 
+        {/* Support Kaarai Karangal Razorpay Card */}
+        <View style={styles.sectionWrap}>
+          <Pressable
+            testID="landing-donate-btn"
+            style={styles.landingDonateCard}
+            onPress={() => setDonationModalVisible(true)}
+          >
+            <LinearGradient
+              colors={["#0F172A", "#1E1B4B", "#311018"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.landingDonateTopRow}>
+              <View style={styles.landingDonatePill}>
+                <Ionicons name="shield-checkmark" size={12} color="#10B981" />
+                <Text style={styles.landingDonatePillText}>SUPPORT KAARAI KARANGAL</Text>
+              </View>
+            </View>
+
+            <View style={styles.landingDonateMainRow}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={styles.landingDonateTitle}>Make a Voluntary Donation</Text>
+                <Text style={styles.landingDonateDesc}>
+                  Power emergency blood delivery boxes, patient hospital care & volunteer logistics in Karaikal.
+                </Text>
+              </View>
+              <View style={styles.landingDonateIcon}>
+                <Ionicons name="heart" size={24} color="#EF4444" />
+              </View>
+            </View>
+
+            <View style={styles.landingDonateBtn}>
+              <LinearGradient
+                colors={["#DC2626", "#B91C1C"]}
+                style={StyleSheet.absoluteFill}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              />
+              <Ionicons name="heart" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.landingDonateBtnText}>Donate Now</Text>
+              <Ionicons name="arrow-forward" size={14} color="#FFFFFF" style={{ marginLeft: 6 }} />
+            </View>
+          </Pressable>
+        </View>
+
         {/* Emergency Alert Banner with Pulsing Icon */}
         <View style={styles.sectionWrap}>
           <Pressable
@@ -422,6 +471,13 @@ export default function Landing() {
           </Pressable>
         </View>
       </ScrollView>
+
+      {/* Kaarai Karangal Razorpay Donation Modal */}
+      <KaaraiKarangalDonationModal
+        visible={donationModalVisible}
+        onClose={() => setDonationModalVisible(false)}
+        initialAmount={donationAmount}
+      />
 
       {/* ========================================================================= */}
       {/* OPENING APP LOGO ANIMATION SPLASH OVERLAY */}
@@ -1067,5 +1123,98 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     marginTop: spacing.sm,
+  },
+  // LANDING DONATE STYLES
+  landingDonateCard: {
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    overflow: "hidden",
+    shadowColor: "#DC2626",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  landingDonateTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  landingDonatePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.3)",
+  },
+  landingDonatePillText: {
+    color: "#34D399",
+    fontSize: 9.5,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  landingRzpPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(56, 189, 248, 0.12)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  landingRzpPillText: {
+    color: "#38BDF8",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  landingDonateMainRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  landingDonateTitle: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  landingDonateDesc: {
+    color: "#CBD5E1",
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  landingDonateIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(239, 68, 68, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.3)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  landingDonateBtn: {
+    height: 40,
+    borderRadius: 10,
+    overflow: "hidden",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#DC2626",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  landingDonateBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
   },
 });

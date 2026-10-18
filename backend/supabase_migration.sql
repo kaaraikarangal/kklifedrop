@@ -196,3 +196,39 @@ CREATE POLICY "Allow audit log access"
   USING (true)
   WITH CHECK (true);
 
+-- 8. donations: Public voluntary contributions to Kaarai Karangal
+CREATE TABLE IF NOT EXISTS public.donations (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  receipt_number text NOT NULL UNIQUE,
+  donor_name text NOT NULL,
+  donor_mobile varchar(15),
+  donor_email text,
+  donor_pan text,
+  amount numeric(10, 2) NOT NULL CHECK (amount > 0),
+  currency text NOT NULL DEFAULT 'INR',
+  purpose text NOT NULL DEFAULT 'Emergency Blood Logistics',
+  is_anonymous boolean NOT NULL DEFAULT false,
+  razorpay_order_id text,
+  razorpay_payment_id text,
+  status text NOT NULL DEFAULT 'completed',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_donations_created ON public.donations (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_donations_rcpt ON public.donations (receipt_number);
+
+ALTER TABLE public.donations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public donation submission" ON public.donations;
+CREATE POLICY "Allow public donation submission"
+  ON public.donations
+  FOR INSERT
+  TO anon, authenticated
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public donation lookup" ON public.donations;
+CREATE POLICY "Allow public donation lookup"
+  ON public.donations
+  FOR SELECT
+  TO anon, authenticated
+  USING (true);
+

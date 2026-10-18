@@ -6,6 +6,9 @@ Clean provider interfaces for SMS / Email / Push so real providers
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import logging
 import os
 import random
@@ -73,6 +76,9 @@ EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "mock").lower()
 FAST2SMS_API_KEY = os.environ.get("FAST2SMS_API_KEY", "")
 FAST2SMS_MESSAGE_ID = os.environ.get("FAST2SMS_MESSAGE_ID", "35846")
 FAST2SMS_PHONE_NUMBER_ID = os.environ.get("FAST2SMS_PHONE_NUMBER_ID", "1281701878369604")
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_51KaaraiKarangal")
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+DONATIONS_CACHE: list[dict] = []
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("kk-life-drop")
@@ -1711,6 +1717,213 @@ async def admin_update_status(req_id: str, body: UpdateRequestStatusIn, admin: d
 async def admin_audit_logs(limit: int = 500, admin: dict = Depends(current_admin)):
     r = await sb.table("audit_logs").select("*").order("timestamp", desc=True).limit(limit).execute()
     return {"logs": r.data}
+
+
+# ---------------------------------------------------------------------------
+# Kaarai Karangal Voluntary Donations — Razorpay Integration
+# ---------------------------------------------------------------------------
+class CreateDonationOrderBody(BaseModel):
+    amount: float = Field(..., gt=0, description="Donation amount in INR")
+    donor_name: str = Field(..., min_length=2, max_length=100)
+    donor_mobile: Optional[str] = None
+    donor_email: Optional[EmailStr] = None
+    donor_pan: Optional[str] = None
+    purpose: str = "Emergency Blood Logistics & Patient Care"
+    is_anonymous: bool = False
+
+
+class VerifyDonationBody(BaseModel):
+    razorpay_payment_id: str
+    razorpay_order_id: str
+    razorpay_signature: Optional[str] = None
+    amount: float
+    donor_name: str
+    donor_mobile: Optional[str] = None
+    donor_email: Optional[EmailStr] = None
+    donor_pan: Optional[str] = None
+    purpose: str = "Emergency Blood Logistics & Patient Care"
+    is_anonymous: bool = False
+
+
+@api.post("/donations/create-order")
+async def create_donation_order(body: CreateDonationOrderBody):
+    if body.amount < 1:
+        raise HTTPException(status_code=400, detail="Minimum donation amount is ₹1")
+
+    amount_paise = int(round(body.amount * 100))
+    receipt_tag = f"kk_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:6]}"
+    is_live_key = (
+        bool(RAZORPAY_KEY_ID)
+        and bool(RAZORPAY_KEY_SECRET)
+        and not RAZORPAY_KEY_ID.startswith("rzp_test_51Kaarai")
+        and RAZORPAY_KEY_SECRET.strip() != ""
+    )
+
+    order_id = f"order_kk_{uuid.uuid4().hex[:14]}"
+    if is_live_key:
+        try:
+            auth_str = f"{RAZORPAY_KEY_ID}:{RAZORPAY_KEY_SECRET}"
+            b64_auth = base64.b64encode(auth_str.encode()).decode()
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    "https://api.razorpay.com/v1/orders",
+                    headers={
+                        "Authorization": f"Basic {b64_auth}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "amount": amount_paise,
+                        "currency": "INR",
+                        "receipt": receipt_tag,
+                        "notes": {
+                            "organization": "Kaarai Karangal Samooga Sevai Amaippu",
+                            "purpose": body.purpose,
+                            "donor_name": body.donor_name if not body.is_anonymous else "Anonymous Lifesaver",
+                        },
+                    },
+                )
+                if res.status_code in (200, 201):
+                    data = res.json()
+                    order_id = data.get("id", order_id)
+                else:
+                    logger.warning("Razorpay order creation fallback: %s", res.text)
+        except Exception as e:
+            logger.error("Razorpay order creation error, falling back to local order ID: %s", e)
+
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "amount": body.amount,
+        "amount_paise": amount_paise,
+        "currency": "INR",
+        "key_id": RAZORPAY_KEY_ID or "rzp_test_51KaaraiKarangal",
+        "receipt_tag": receipt_tag,
+        "organization": "Kaarai Karangal Samooga Sevai Amaippu",
+        "registration_no": "Reg. No. 31/2025",
+        "purpose": body.purpose,
+    }
+
+
+@api.post("/donations/verify")
+async def verify_donation(body: VerifyDonationBody):
+    is_live_key = (
+        bool(RAZORPAY_KEY_ID)
+        and bool(RAZORPAY_KEY_SECRET)
+        and not RAZORPAY_KEY_ID.startswith("rzp_test_51Kaarai")
+        and RAZORPAY_KEY_SECRET.strip() != ""
+    )
+
+    if is_live_key and body.razorpay_signature:
+        generated_signature = hmac.new(
+            RAZORPAY_KEY_SECRET.encode(),
+            f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        if generated_signature != body.razorpay_signature:
+            raise HTTPException(status_code=400, detail="Invalid Razorpay payment signature.")
+
+    receipt_no = f"KK-DON-{datetime.now().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
+    donation_record = {
+        "id": str(uuid.uuid4()),
+        "receipt_number": receipt_no,
+        "donor_name": body.donor_name,
+        "donor_mobile": body.donor_mobile,
+        "donor_email": str(body.donor_email) if body.donor_email else None,
+        "donor_pan": body.donor_pan.upper() if body.donor_pan else None,
+        "amount": body.amount,
+        "currency": "INR",
+        "purpose": body.purpose,
+        "is_anonymous": body.is_anonymous,
+        "razorpay_order_id": body.razorpay_order_id,
+        "razorpay_payment_id": body.razorpay_payment_id,
+        "status": "completed",
+        "created_at": iso(now_utc()),
+    }
+
+    # Persist in Supabase if donations table exists, else cache
+    try:
+        if sb:
+            await sb.table("donations").insert(donation_record).execute()
+    except Exception as e:
+        logger.warning("Could not persist to Supabase donations table, saving to cache: %s", e)
+
+    # Cache for quick retrieval & fallback
+    DONATIONS_CACHE.insert(0, donation_record)
+
+    # Also log to audit_logs
+    try:
+        if sb:
+            await sb.table("audit_logs").insert({
+                "action": "voluntary_donation_received",
+                "target_type": "donation",
+                "target_id": receipt_no,
+                "timestamp": iso(now_utc()),
+                "metadata": {
+                    "amount": body.amount,
+                    "payment_id": body.razorpay_payment_id,
+                    "purpose": body.purpose,
+                },
+            }).execute()
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "receipt_number": receipt_no,
+        "amount": body.amount,
+        "currency": "INR",
+        "donor_name": "Anonymous Lifesaver" if body.is_anonymous else body.donor_name,
+        "purpose": body.purpose,
+        "payment_id": body.razorpay_payment_id,
+        "created_at": donation_record["created_at"],
+        "organization": "Kaarai Karangal Samooga Sevai Amaippu",
+        "registration_no": "Reg. No. 31/2025",
+        "message": "Thank you for supporting Kaarai Karangal! Your voluntary contribution powers emergency blood delivery.",
+    }
+
+
+@api.get("/donations/stats")
+async def get_donation_stats():
+    total_amount = 0.0
+    donor_count = 0
+    recent = []
+
+    # Try supabase first
+    try:
+        if sb:
+            r = await sb.table("donations").select("receipt_number,donor_name,amount,purpose,is_anonymous,created_at").order("created_at", desc=True).limit(10).execute()
+            if r.data:
+                for row in r.data:
+                    donor_count += 1
+                    total_amount += float(row.get("amount", 0))
+                    recent.append({
+                        "name": "Anonymous" if row.get("is_anonymous") else row.get("donor_name", "Supporter"),
+                        "amount": float(row.get("amount", 0)),
+                        "purpose": row.get("purpose"),
+                        "date": row.get("created_at"),
+                    })
+    except Exception:
+        pass
+
+    # Merge or fallback from cache
+    for item in DONATIONS_CACHE:
+        if not any(x.get("date") == item["created_at"] for x in recent):
+            total_amount += float(item.get("amount", 0))
+            donor_count += 1
+            if len(recent) < 10:
+                recent.append({
+                    "name": "Anonymous" if item.get("is_anonymous") else item.get("donor_name", "Supporter"),
+                    "amount": float(item.get("amount", 0)),
+                    "purpose": item.get("purpose"),
+                    "date": item.get("created_at"),
+                })
+
+    return {
+        "total_amount": round(total_amount, 2),
+        "donor_count": donor_count,
+        "recent_donors": recent,
+        "organization": "Kaarai Karangal Samooga Sevai Amaippu",
+    }
 
 
 # ---------------------------------------------------------------------------

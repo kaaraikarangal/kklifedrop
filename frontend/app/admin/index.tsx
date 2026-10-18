@@ -28,7 +28,7 @@ import { syncPushTokenWithBackend, sendTestLocalNotification, EMERGENCY_CHANNEL_
 import { DatePickerField } from "@/src/components/DatePickerField";
 import { formatDateToDDMMYYYY, formatDateToYYYYMMDD } from "@/src/utils/dateUtils";
 
-type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "subadmins" | "audit";
+type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "subadmins" | "audit" | "donations";
 
 
 const GROUPS = ["All", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
@@ -245,6 +245,52 @@ function getAuditActionMeta(action: string) {
         badgeColor: "#334155",
       };
 
+    case "user_logout":
+      return {
+        label: "USER LOGOUT",
+        icon: "log-out",
+        color: "#64748B",
+        bg: "#F8FAFC",
+        badgeBg: "#F1F5F9",
+        badgeColor: "#334155",
+      };
+    case "admin_logout":
+      return {
+        label: "ADMIN LOGOUT",
+        icon: "log-out",
+        color: "#EA580C",
+        bg: "#FFF7ED",
+        badgeBg: "#FFEDD5",
+        badgeColor: "#9A3412",
+      };
+    case "voluntary_donation_received":
+      return {
+        label: "DONATION (RAZORPAY)",
+        icon: "heart",
+        color: "#059669",
+        bg: "#ECFDF5",
+        badgeBg: "#D1FAE5",
+        badgeColor: "#065F46",
+      };
+    case "direct_upi_donation_recorded":
+      return {
+        label: "DONATION (DIRECT UPI)",
+        icon: "qr-code",
+        color: "#7C3AED",
+        bg: "#F5F3FF",
+        badgeBg: "#EDE9FE",
+        badgeColor: "#6D28D9",
+      };
+    case "update_donation_status":
+      return {
+        label: "DONATION STATUS UPDATED",
+        icon: "checkmark-done-circle",
+        color: "#0284C7",
+        bg: "#F0F9FF",
+        badgeBg: "#E0F2FE",
+        badgeColor: "#0369A1",
+      };
+
     default:
       return {
         label: (action || "ACTION").replace(/_/g, " ").toUpperCase(),
@@ -308,6 +354,12 @@ export default function AdminHome() {
   const [requestSearch, setRequestSearch] = useState("");
   const [selectedReqStatus, setSelectedReqStatus] = useState("All");
   const [selectedUrgency, setSelectedUrgency] = useState("All");
+
+  // Voluntary Donations State
+  const [donations, setDonations] = useState<any[]>([]);
+  const [donationSearch, setDonationSearch] = useState("");
+  const [donationMethodFilter, setDonationMethodFilter] = useState<"All" | "Razorpay" | "UPI" | "Anonymous">("All");
+  const [viewReceiptModal, setViewReceiptModal] = useState<{ open: boolean; donation?: any }>({ open: false });
 
   // Super Admin & Sub-Admins State
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
@@ -383,7 +435,7 @@ export default function AdminHome() {
         return;
       }
 
-      const [s, d, r, n, a, me, sa] = await Promise.all([
+      const [s, d, r, n, a, me, sa, don] = await Promise.all([
         api("/admin/stats", { auth: true }),
         api("/admin/donors", { auth: true }),
         api("/blood-requests", { auth: true }),
@@ -391,12 +443,14 @@ export default function AdminHome() {
         api("/admin/audit-logs", { auth: true }).catch(() => ({ logs: [] })),
         api("/admin/me", { auth: true }).catch(() => ({ admin: null })),
         api("/admin/sub-admins", { auth: true }).catch(() => ({ admins: [] })),
+        api("/admin/donations", { auth: true }).catch(() => ({ donations: [] })),
       ]);
       setStats(s);
       setDonors((d as any).donors || []);
       setRequests((r as any).requests || []);
       setNotifs((n as any).groups || (n as any).notifications || []);
       setAuditLogs((a as any).logs || []);
+      setDonations((don as any).donations || []);
 
       const adminMe = (me as any)?.admin;
       setCurrentAdminUser(adminMe);
@@ -853,6 +907,12 @@ export default function AdminHome() {
       let matchAction = true;
       if (auditActionFilter === "All") {
         matchAction = true;
+      } else if (auditActionFilter === "Donations") {
+        matchAction =
+          Boolean(
+            log.target_type === "donation" ||
+            log.action?.includes("donation")
+          );
       } else if (auditActionFilter === "Admins") {
         matchAction =
           Boolean(
@@ -910,6 +970,13 @@ export default function AdminHome() {
       badge: emergencyRequests.length > 0 ? emergencyRequests.length : undefined,
     },
     {
+      id: "donations" as ViewTab,
+      label: `Donations (${donations.length})`,
+      shortLabel: "Donations",
+      icon: "heart-circle-outline",
+      activeIcon: "heart-circle",
+    },
+    {
       id: "notifications" as ViewTab,
       label: `Broadcasts (${notifs.length})`,
       shortLabel: "Alerts",
@@ -934,7 +1001,48 @@ export default function AdminHome() {
       icon: "shield-outline",
       activeIcon: "shield",
     },
-  ], [donors.length, requests.length, emergencyRequests.length, notifs.length, subAdmins.length, auditLogs.length, isSuperAdmin]);
+  ], [donors.length, requests.length, emergencyRequests.length, donations.length, notifs.length, subAdmins.length, auditLogs.length, isSuperAdmin]);
+
+  const filteredDonations = useMemo(() => {
+    return donations.filter((d) => {
+      const q = (donationSearch || "").trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        d.donor_name?.toLowerCase().includes(q) ||
+        d.receipt_number?.toLowerCase().includes(q) ||
+        d.donor_mobile?.toLowerCase().includes(q) ||
+        d.donor_email?.toLowerCase().includes(q) ||
+        d.donor_pan?.toLowerCase().includes(q) ||
+        d.razorpay_payment_id?.toLowerCase().includes(q) ||
+        d.purpose?.toLowerCase().includes(q);
+
+      let matchesFilter = true;
+      if (donationMethodFilter === "Razorpay") {
+        matchesFilter = !d.razorpay_payment_id?.startsWith("UPI-UTR-") && d.razorpay_order_id !== "DIRECT_UPI_DBS";
+      } else if (donationMethodFilter === "UPI") {
+        matchesFilter = Boolean(d.razorpay_payment_id?.startsWith("UPI-UTR-") || d.razorpay_order_id === "DIRECT_UPI_DBS");
+      } else if (donationMethodFilter === "Anonymous") {
+        matchesFilter = Boolean(d.is_anonymous);
+      }
+      return matchesSearch && matchesFilter;
+    });
+  }, [donations, donationSearch, donationMethodFilter]);
+
+  const totalDonationsSum = useMemo(() => {
+    return donations.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  }, [donations]);
+
+  const razorpayDonationsSum = useMemo(() => {
+    return donations
+      .filter((d) => !d.razorpay_payment_id?.startsWith("UPI-UTR-") && d.razorpay_order_id !== "DIRECT_UPI_DBS")
+      .reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  }, [donations]);
+
+  const directUpiDonationsSum = useMemo(() => {
+    return donations
+      .filter((d) => d.razorpay_payment_id?.startsWith("UPI-UTR-") || d.razorpay_order_id === "DIRECT_UPI_DBS")
+      .reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  }, [donations]);
 
   const activeTabMeta = navTabs.find((t) => t.id === view) || navTabs[0];
 
@@ -1132,6 +1240,16 @@ export default function AdminHome() {
               icon="trophy"
               color="#059669"
               bg="#F0FDF4"
+              isMobile={isMobile}
+            />
+            <StatCard
+              testID="stat-contributions"
+              label="Contributions"
+              value={`₹${(stats.total_donations_amount || totalDonationsSum || 0).toLocaleString("en-IN")}`}
+              sub={`${stats.total_donations_count || donations.length} gifts recorded`}
+              icon="heart"
+              color="#059669"
+              bg="#ECFDF5"
               isMobile={isMobile}
             />
           </View>
@@ -2109,6 +2227,7 @@ export default function AdminHome() {
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.auditFilterScroll}>
                   {[
                     { id: "All", label: `All (${auditLogs.length})` },
+                    { id: "Donations", label: "Donations" },
                     { id: "Admins", label: "Admin Actions" },
                     { id: "Users", label: "User Actions" },
                     { id: "Logins", label: "Logins" },
@@ -2384,6 +2503,308 @@ export default function AdminHome() {
             }}
           />
         )
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: DONATIONS & FINANCIAL CONTRIBUTIONS LEDGER */}
+      {/* ========================================================================= */}
+      {view === "donations" && (
+        <FlatList
+          data={filteredDonations}
+          keyExtractor={(item) => item.id || item.receipt_number}
+          contentContainerStyle={[
+            styles.contentWrap,
+            {
+              paddingHorizontal: isMobile ? 12 : spacing.lg,
+              paddingBottom: insets.bottom + (isMobile ? 80 : 32),
+            },
+          ]}
+          ListHeaderComponent={
+            <View style={styles.historyHead}>
+              <View style={styles.superAdminHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <Text style={styles.historyHeadTitle}>Donations & Contribution Ledger</Text>
+                    <View style={[styles.superAdminPill, { backgroundColor: "#ECFDF5" }]}>
+                      <Text style={[styles.superAdminPillText, { color: "#065F46" }]}>
+                        OFFICIAL 31/2025
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.historyHeadSub}>
+                    Official ledger tracking voluntary public contributions received via Razorpay and Direct UPI (DBS Bank).
+                  </Text>
+                </View>
+                <Pressable
+                  style={styles.refreshAuditBtn}
+                  onPress={() => {
+                    api("/admin/donations", { auth: true })
+                      .then((d: any) => {
+                        setDonations(d.donations || []);
+                        toast("info", "Ledger Synchronized", "Donation records updated");
+                      })
+                      .catch((e: any) => toast("error", "Sync Failed", e.message));
+                  }}
+                >
+                  <Ionicons name="refresh" size={16} color={colors.brandBlue} />
+                  <Text style={styles.refreshAuditText}>Sync</Text>
+                </Pressable>
+              </View>
+
+              {/* Financial Metrics Summary Banner */}
+              <View style={[styles.donationsSummaryBanner, isMobile && { padding: 10 }]}>
+                <View style={styles.donationMetricBox}>
+                  <Text style={[styles.donationMetricLabel, isMobile && { fontSize: 8 }]}>TOTAL COLLECTED</Text>
+                  <Text style={[styles.donationMetricValue, isMobile && { fontSize: 15 }]}>
+                    ₹{totalDonationsSum.toLocaleString("en-IN")}
+                  </Text>
+                  <Text style={[styles.donationMetricSub, isMobile && { fontSize: 9 }]}>{donations.length} total gifts</Text>
+                </View>
+                <View style={styles.donationMetricDivider} />
+                <View style={styles.donationMetricBox}>
+                  <Text style={[styles.donationMetricLabel, isMobile && { fontSize: 8 }]}>RAZORPAY</Text>
+                  <Text style={[styles.donationMetricValue, { color: "#059669" }, isMobile && { fontSize: 15 }]}>
+                    ₹{razorpayDonationsSum.toLocaleString("en-IN")}
+                  </Text>
+                  <Text style={[styles.donationMetricSub, isMobile && { fontSize: 9 }]}>Gateway verified</Text>
+                </View>
+                <View style={styles.donationMetricDivider} />
+                <View style={styles.donationMetricBox}>
+                  <Text style={[styles.donationMetricLabel, isMobile && { fontSize: 8 }]}>DIRECT UPI</Text>
+                  <Text style={[styles.donationMetricValue, { color: "#7C3AED" }, isMobile && { fontSize: 15 }]}>
+                    ₹{directUpiDonationsSum.toLocaleString("en-IN")}
+                  </Text>
+                  <Text style={[styles.donationMetricSub, isMobile && { fontSize: 9 }]}>kaaraikarangal@dbs</Text>
+                </View>
+              </View>
+
+              {/* Search & Filter Controls */}
+              <View style={styles.auditFilterBox}>
+                <View style={styles.searchWrap}>
+                  <Ionicons name="search" size={16} color="#94A3B8" />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Search by donor name, mobile, receipt #, UTR, PAN..."
+                    placeholderTextColor="#94A3B8"
+                    value={donationSearch}
+                    onChangeText={setDonationSearch}
+                  />
+                  {donationSearch ? (
+                    <Pressable onPress={() => setDonationSearch("")}>
+                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.auditFilterScroll}
+                >
+                  {[
+                    { id: "All", label: `All (${donations.length})` },
+                    { id: "Razorpay", label: "Razorpay" },
+                    { id: "UPI", label: "Direct UPI (DBS)" },
+                    { id: "Anonymous", label: "Anonymous" },
+                  ].map((f) => (
+                    <Pressable
+                      key={f.id}
+                      onPress={() => setDonationMethodFilter(f.id as any)}
+                      style={[
+                        styles.auditFilterChip,
+                        donationMethodFilter === f.id && styles.auditFilterChipActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.auditFilterChipText,
+                          donationMethodFilter === f.id && styles.auditFilterChipTextActive,
+                        ]}
+                      >
+                        {f.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="heart-dislike-outline" size={40} color="#94A3B8" />
+              <Text style={styles.emptyTitle}>No donations found</Text>
+              <Text style={styles.emptyDesc}>
+                {donationSearch || donationMethodFilter !== "All"
+                  ? "Try clearing search keywords or switching filters."
+                  : "Voluntary donations made by supporters will automatically appear in this official ledger."}
+              </Text>
+            </View>
+          }
+          renderItem={({ item: d }) => {
+            const isDirectUpi =
+              Boolean(d.razorpay_payment_id?.startsWith("UPI-UTR-")) ||
+              d.razorpay_order_id === "DIRECT_UPI_DBS";
+            const cleanMobile = d.donor_mobile
+              ? String(d.donor_mobile).replace(/\D/g, "").slice(-10)
+              : "";
+
+            return (
+              <View style={styles.donationCard} key={d.id || d.receipt_number}>
+                <View style={styles.donationCardTop}>
+                  <View
+                    style={[
+                      styles.donationAvatar,
+                      { backgroundColor: isDirectUpi ? "#F5F3FF" : "#ECFDF5" },
+                    ]}
+                  >
+                    <Ionicons
+                      name={isDirectUpi ? "qr-code" : "heart"}
+                      size={20}
+                      color={isDirectUpi ? "#7C3AED" : "#059669"}
+                    />
+                  </View>
+
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                        <Text style={styles.donationDonorName} numberOfLines={1}>
+                          {d.donor_name || "Anonymous Lifesaver"}
+                        </Text>
+                        {d.is_anonymous ? (
+                          <View style={styles.anonBadgePill}>
+                            <Text style={styles.anonBadgeText}>Anonymous</Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {/* Payment Method Badge */}
+                      <View
+                        style={[
+                          styles.statusBadgePill,
+                          {
+                            backgroundColor: isDirectUpi ? "#F5F3FF" : "#ECFDF5",
+                            borderColor: isDirectUpi ? "#DDD6FE" : "#A7F3D0",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.statusBadgePillText,
+                            { color: isDirectUpi ? "#6D28D9" : "#065F46" },
+                          ]}
+                        >
+                          {isDirectUpi ? "Direct UPI (DBS)" : "Razorpay"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.donationTimeSub}>
+                      {d.created_at ? formatAuditTime(d.created_at) : "Recent"}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Amount and Receipt Strip */}
+                <View style={styles.donationAmountStrip}>
+                  <View>
+                    <Text style={styles.donationAmountLabel}>AMOUNT CONTRIBUTED</Text>
+                    <Text style={styles.donationAmountText}>
+                      ₹{Number(d.amount || 0).toLocaleString("en-IN")}
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    style={styles.donationReceiptPill}
+                    onPress={() => {
+                      if (typeof navigator !== "undefined" && navigator.clipboard) {
+                        navigator.clipboard.writeText(d.receipt_number);
+                        toast("info", "Copied", `Receipt ${d.receipt_number} copied to clipboard`);
+                      }
+                    }}
+                  >
+                    <Ionicons name="document-text-outline" size={13} color={colors.brandBlue} />
+                    <Text style={styles.donationReceiptText}>{d.receipt_number}</Text>
+                    <Ionicons name="copy-outline" size={11} color="#64748B" />
+                  </Pressable>
+                </View>
+
+                {/* Purpose Badge */}
+                {d.purpose ? (
+                  <View style={styles.donationPurposeBox}>
+                    <Ionicons name="gift-outline" size={13} color="#64748B" />
+                    <Text style={styles.donationPurposeText} numberOfLines={2}>
+                      {d.purpose}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Particulars Grid */}
+                <View style={styles.donationParticularsGrid}>
+                  {cleanMobile ? (
+                    <View style={styles.donationParticularItem}>
+                      <Ionicons name="call-outline" size={13} color="#64748B" />
+                      <Text style={styles.donationParticularText}>+91 {cleanMobile}</Text>
+                    </View>
+                  ) : null}
+
+                  {d.donor_email ? (
+                    <View style={styles.donationParticularItem}>
+                      <Ionicons name="mail-outline" size={13} color="#64748B" />
+                      <Text style={styles.donationParticularText} numberOfLines={1}>
+                        {d.donor_email}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {d.donor_pan ? (
+                    <View style={styles.donationParticularItem}>
+                      <Ionicons name="card-outline" size={13} color="#64748B" />
+                      <Text style={styles.donationParticularText}>PAN: {d.donor_pan}</Text>
+                      <View style={styles.taxPill}>
+                        <Text style={styles.taxPillText}>80G Eligible</Text>
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {d.razorpay_payment_id ? (
+                    <View style={styles.donationParticularItem}>
+                      <Ionicons name="finger-print-outline" size={13} color="#64748B" />
+                      <Text style={styles.donationParticularText} numberOfLines={1}>
+                        Ref: {d.razorpay_payment_id}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Card Action Footer */}
+                <View style={styles.donationCardActions}>
+                  <Pressable
+                    style={styles.btnViewReceiptPrimary}
+                    onPress={() => setViewReceiptModal({ open: true, donation: d })}
+                  >
+                    <Ionicons name="receipt-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.btnViewReceiptText}>View Official Receipt</Text>
+                  </Pressable>
+
+                  {cleanMobile ? (
+                    <Pressable
+                      style={styles.btnWhatsappContact}
+                      onPress={() => {
+                        const url = `https://wa.me/91${cleanMobile}?text=${encodeURIComponent(
+                          `Vanakkam ${d.donor_name || "Lifesaver"}, Kaarai Karangal expresses heartfelt gratitude for your voluntary donation of ₹${d.amount} (Receipt: ${d.receipt_number}). May your noble gesture save precious lives!`
+                        )}`;
+                        Linking.openURL(url).catch(() => {});
+                      }}
+                    >
+                      <Ionicons name="logo-whatsapp" size={14} color="#16A34A" />
+                      <Text style={styles.btnWhatsappText}>WhatsApp</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            );
+          }}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -3121,6 +3542,156 @@ export default function AdminHome() {
       </Modal>
 
       {/* ========================================================================= */}
+      {/* MODAL: OFFICIAL DONATION RECEIPT CERTIFICATE */}
+      {/* ========================================================================= */}
+      {/* ========================================================================= */}
+      {/* MODAL: OFFICIAL DONATION RECEIPT (COMPACT SINGLE VIEW - ZERO SCROLL) */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={viewReceiptModal.open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setViewReceiptModal({ open: false })}
+      >
+        <View style={styles.modalBg}>
+          <View style={[styles.compactReceiptCard, isMobile && { width: "95%", padding: 12 }]}>
+            {/* 1. Header: Emblem + Trust Credentials */}
+            <View style={styles.cReceiptHead}>
+              <View style={styles.cReceiptEmblem}>
+                <Ionicons name="shield-checkmark" size={16} color="#B45309" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.cReceiptTamilTitle}>காரை கரங்கள் சமூக சேவை அமைப்பு</Text>
+                <Text style={styles.cReceiptTitle} numberOfLines={1}>KAARAI KARANGAL</Text>
+                <Text style={styles.cReceiptSub}>Reg. No. 31/2025 • Public Trust • Karaikal</Text>
+              </View>
+              <View style={styles.cReceiptIsoBadge}>
+                <Text style={styles.cReceiptIsoText}>ISO 9001</Text>
+              </View>
+            </View>
+
+            <View style={styles.cReceiptDivider} />
+
+            {/* 2. Receipt No. & Date Strip */}
+            <View style={styles.cReceiptMetaStrip}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cReceiptMetaLabel}>OFFICIAL RECEIPT NO.</Text>
+                <Text style={styles.cReceiptMetaVal} numberOfLines={1}>
+                  {viewReceiptModal.donation?.receipt_number || "KK-DON-REC"}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={styles.cReceiptMetaLabel}>ISSUANCE DATE</Text>
+                <Text style={styles.cReceiptMetaVal}>
+                  {viewReceiptModal.donation?.created_at
+                    ? new Date(viewReceiptModal.donation.created_at).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })
+                    : "Today"}
+                </Text>
+              </View>
+            </View>
+
+            {/* 3. Donor Particulars Compact Grid */}
+            <View style={styles.cReceiptBody}>
+              <View style={styles.cReceiptRow}>
+                <Text style={styles.cReceiptKey}>Donor Name:</Text>
+                <Text style={styles.cReceiptVal} numberOfLines={1}>
+                  {viewReceiptModal.donation?.donor_name || "Anonymous Lifesaver"}
+                  {viewReceiptModal.donation?.is_anonymous ? " (Anon)" : ""}
+                </Text>
+              </View>
+
+              <View style={styles.cReceiptRow}>
+                <Text style={styles.cReceiptKey}>Contact / PAN:</Text>
+                <Text style={styles.cReceiptVal} numberOfLines={1}>
+                  {viewReceiptModal.donation?.donor_mobile || "Not specified"}
+                  {viewReceiptModal.donation?.donor_pan ? ` • PAN: ${viewReceiptModal.donation.donor_pan}` : ""}
+                </Text>
+              </View>
+
+              <View style={styles.cReceiptRow}>
+                <Text style={styles.cReceiptKey}>Purpose:</Text>
+                <Text style={styles.cReceiptVal} numberOfLines={1}>
+                  {viewReceiptModal.donation?.purpose || "Emergency Blood Logistics & Patient Care"}
+                </Text>
+              </View>
+
+              <View style={styles.cReceiptRow}>
+                <Text style={styles.cReceiptKey}>Reference:</Text>
+                <Text style={styles.cReceiptVal} numberOfLines={1}>
+                  {viewReceiptModal.donation?.razorpay_payment_id || "Direct Gateway"}
+                </Text>
+              </View>
+            </View>
+
+            {/* 4. Compact Rupee Amount Badge */}
+            <View style={styles.cReceiptAmountBanner}>
+              <View>
+                <Text style={styles.cReceiptAmountLabel}>SUM RECEIVED</Text>
+                <Text style={styles.cReceiptAmountVal}>
+                  ₹{Number(viewReceiptModal.donation?.amount || 0).toLocaleString("en-IN")}
+                </Text>
+              </View>
+              <View style={styles.cReceiptMethodPill}>
+                <Ionicons
+                  name={
+                    viewReceiptModal.donation?.razorpay_payment_id?.startsWith("UPI-UTR-") ||
+                    viewReceiptModal.donation?.razorpay_order_id === "DIRECT_UPI_DBS"
+                      ? "qr-code"
+                      : "checkmark-circle"
+                  }
+                  size={12}
+                  color="#059669"
+                />
+                <Text style={styles.cReceiptMethodText}>
+                  {viewReceiptModal.donation?.razorpay_payment_id?.startsWith("UPI-UTR-") ||
+                  viewReceiptModal.donation?.razorpay_order_id === "DIRECT_UPI_DBS"
+                    ? "Direct UPI"
+                    : "Razorpay"}
+                </Text>
+              </View>
+            </View>
+
+            {/* 5. Seal & Signatory Single Row */}
+            <View style={styles.cReceiptSealRow}>
+              <View style={styles.cReceiptSealBadge}>
+                <Ionicons name="shield-checkmark" size={11} color="#059669" />
+                <Text style={styles.cReceiptSealText}>Official Ledger (31/2025)</Text>
+              </View>
+              <Text style={styles.cReceiptSignatoryText}>Authorized Trustee</Text>
+            </View>
+
+            {/* 6. Action Buttons */}
+            <View style={styles.cReceiptActions}>
+              <Pressable
+                style={styles.cBtnCopy}
+                onPress={() => {
+                  if (typeof navigator !== "undefined" && navigator.clipboard && viewReceiptModal.donation) {
+                    const text = `KAARAI KARANGAL OFFICIAL DONATION RECEIPT\nReceipt No: ${viewReceiptModal.donation.receipt_number}\nDonor: ${viewReceiptModal.donation.donor_name || "Anonymous"}\nAmount: ₹${viewReceiptModal.donation.amount}\nPurpose: ${viewReceiptModal.donation.purpose}\nRef: ${viewReceiptModal.donation.razorpay_payment_id}\nReg. No. 31/2025 - Karaikal`;
+                    navigator.clipboard.writeText(text);
+                    toast("success", "Copied", "Receipt summary copied");
+                  }
+                }}
+              >
+                <Ionicons name="copy-outline" size={13} color="#475569" />
+                <Text style={styles.cBtnCopyText}>Copy</Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.cBtnClose}
+                onPress={() => setViewReceiptModal({ open: false })}
+              >
+                <Text style={styles.cBtnCloseText}>Close</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
       {/* STATIC FIXED BOTTOM NAVIGATION BAR */}
       {/* ========================================================================= */}
       {isMobile && (
@@ -3130,37 +3701,43 @@ export default function AdminHome() {
             { paddingBottom: Math.max(insets.bottom, 8) },
           ]}
         >
-          {navTabs.map((tab) => {
-            const active = view === tab.id;
-            return (
-              <Pressable
-                key={tab.id}
-                testID={`admin-bottom-tab-${tab.id}`}
-                onPress={() => setView(tab.id)}
-                style={styles.bottomNavItem}
-                hitSlop={6}
-              >
-                <View style={[styles.bottomNavIconBox, active && styles.bottomNavIconBoxActive]}>
-                  <Ionicons
-                    name={(active ? tab.activeIcon : tab.icon) as any}
-                    size={20}
-                    color={active ? colors.brandPrimary : "#64748B"}
-                  />
-                  {tab.badge ? (
-                    <View style={styles.bottomNavBadge}>
-                      <Text style={styles.bottomNavBadgeText}>{tab.badge}</Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Text
-                  style={[styles.bottomNavLabel, active && styles.bottomNavLabelActive]}
-                  numberOfLines={1}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.bottomNavScroll}
+          >
+            {navTabs.map((tab) => {
+              const active = view === tab.id;
+              return (
+                <Pressable
+                  key={tab.id}
+                  testID={`admin-bottom-tab-${tab.id}`}
+                  onPress={() => setView(tab.id)}
+                  style={styles.bottomNavItem}
+                  hitSlop={6}
                 >
-                  {tab.shortLabel}
-                </Text>
-              </Pressable>
-            );
-          })}
+                  <View style={[styles.bottomNavIconBox, active && styles.bottomNavIconBoxActive]}>
+                    <Ionicons
+                      name={(active ? tab.activeIcon : tab.icon) as any}
+                      size={20}
+                      color={active ? colors.brandPrimary : "#64748B"}
+                    />
+                    {tab.badge ? (
+                      <View style={styles.bottomNavBadge}>
+                        <Text style={styles.bottomNavBadgeText}>{tab.badge}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text
+                    style={[styles.bottomNavLabel, active && styles.bottomNavLabelActive]}
+                    numberOfLines={1}
+                  >
+                    {tab.shortLabel}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       )}
     </View>
@@ -6060,14 +6637,10 @@ const styles = StyleSheet.create({
 
   /* Static Fixed Bottom Navigation Bar */
   bottomNavBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-around",
     backgroundColor: "#FFFFFF",
     borderTopWidth: 1,
     borderTopColor: "#E2E8F0",
-    paddingTop: 8,
-    paddingHorizontal: 2,
+    paddingTop: 6,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.06,
@@ -6075,11 +6648,18 @@ const styles = StyleSheet.create({
     elevation: 8,
     zIndex: 100,
   },
+  bottomNavScroll: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    gap: 2,
+  },
   bottomNavItem: {
-    flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 2,
+    paddingHorizontal: 6,
+    minWidth: 60,
   },
   bottomNavIconBox: {
     position: "relative",
@@ -6120,6 +6700,442 @@ const styles = StyleSheet.create({
   },
   bottomNavLabelActive: {
     color: colors.brandPrimary,
+    fontWeight: "800",
+  },
+
+  /* ========================================================================= */
+  /* DONATIONS & CONTRIBUTION LEDGER STYLES */
+  /* ========================================================================= */
+  donationsSummaryBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    padding: spacing.md,
+    marginTop: 10,
+    marginBottom: 8,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  donationMetricBox: {
+    flex: 1,
+    alignItems: "center",
+  },
+  donationMetricLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  donationMetricValue: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#0F172A",
+  },
+  donationMetricSub: {
+    fontSize: 10,
+    color: "#94A3B8",
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  donationMetricDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: "#E2E8F0",
+    marginHorizontal: 4,
+  },
+
+  donationCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#000",
+    shadowOpacity: 0.03,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  donationCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  donationAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  donationDonorName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  anonBadgePill: {
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  anonBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+  donationTimeSub: {
+    fontSize: 11,
+    color: "#94A3B8",
+    marginTop: 2,
+  },
+
+  donationAmountStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F8FAFC",
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+  },
+  donationAmountLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.5,
+  },
+  donationAmountText: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#059669",
+  },
+  donationReceiptPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  donationReceiptText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: colors.brandBlue,
+  },
+
+  donationPurposeBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FEF3C7",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    marginTop: 8,
+  },
+  donationPurposeText: {
+    fontSize: 11,
+    color: "#92400E",
+    fontWeight: "600",
+    flex: 1,
+  },
+
+  donationParticularsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  donationParticularItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  donationParticularText: {
+    fontSize: 11,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  taxPill: {
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  taxPillText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#92400E",
+  },
+
+  donationCardActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  btnViewReceiptPrimary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.brandBlue,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.md,
+  },
+  btnViewReceiptText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  btnWhatsappContact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#DCFCE7",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+  },
+  btnWhatsappText: {
+    color: "#15803D",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  /* Compact Single-View Official Receipt (Zero Scroll) */
+  compactReceiptCard: {
+    backgroundColor: "#FFFFFF",
+    width: "100%",
+    maxWidth: 440,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: "#D97706",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  cReceiptHead: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  cReceiptEmblem: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FEF3C7",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  cReceiptTamilTitle: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#92400E",
+  },
+  cReceiptTitle: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: 0.5,
+  },
+  cReceiptSub: {
+    fontSize: 9,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  cReceiptIsoBadge: {
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  cReceiptIsoText: {
+    fontSize: 8,
+    fontWeight: "800",
+    color: "#1D4ED8",
+  },
+  cReceiptDivider: {
+    height: 1,
+    backgroundColor: "#FDE68A",
+    marginVertical: 8,
+  },
+  cReceiptMetaStrip: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#FEF3C7",
+    marginBottom: 8,
+  },
+  cReceiptMetaLabel: {
+    fontSize: 8,
+    fontWeight: "800",
+    color: "#92400E",
+    letterSpacing: 0.5,
+  },
+  cReceiptMetaVal: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#0F172A",
+  },
+  cReceiptBody: {
+    gap: 4,
+    marginBottom: 8,
+  },
+  cReceiptRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F8FAFC",
+  },
+  cReceiptKey: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "600",
+  },
+  cReceiptVal: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#0F172A",
+    textAlign: "right",
+    flex: 1,
+    marginLeft: 8,
+  },
+  cReceiptAmountBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  cReceiptAmountLabel: {
+    fontSize: 8,
+    fontWeight: "900",
+    color: "#065F46",
+    letterSpacing: 0.5,
+  },
+  cReceiptAmountVal: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#047857",
+  },
+  cReceiptMethodPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  cReceiptMethodText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#065F46",
+  },
+  cReceiptSealRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+    marginBottom: 10,
+  },
+  cReceiptSealBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  cReceiptSealText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#065F46",
+  },
+  cReceiptSignatoryText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  cReceiptActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  cBtnCopy: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    backgroundColor: "#F1F5F9",
+    paddingVertical: 7,
+    borderRadius: radius.md,
+  },
+  cBtnCopyText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  cBtnClose: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.brandPrimary,
+    paddingVertical: 7,
+    borderRadius: radius.md,
+  },
+  cBtnCloseText: {
+    color: "#FFFFFF",
+    fontSize: 12,
     fontWeight: "800",
   },
 });
