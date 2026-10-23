@@ -420,14 +420,16 @@ const styles = StyleSheet.create({
   // Card
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.07,
     shadowRadius: 16,
     elevation: 4,
     marginBottom: 20,
+    overflow: "hidden",
   },
   cardHeader: {
     alignItems: "center",
@@ -494,13 +496,16 @@ const styles = StyleSheet.create({
 
   // OTP
   otpSection: {
+    width: "100%",
     marginBottom: 20,
     alignItems: "center",
   },
   otpRow: {
     flexDirection: "row",
-    gap: 10,
+    width: "100%",
+    maxWidth: 320,
     justifyContent: "center",
+    alignItems: "center",
     marginBottom: 10,
     position: "relative",
   },
@@ -512,14 +517,16 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   otpBox: {
-    width: 48,
-    height: 58,
-    borderRadius: 12,
+    flex: 1,
+    maxWidth: 44,
+    height: 54,
+    borderRadius: 14,
     borderWidth: 1.5,
     borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary,
     alignItems: "center",
     justifyContent: "center",
+    marginHorizontal: 3,
   },
   otpBoxFilled: {
     borderColor: colors.brandPrimary,
@@ -536,8 +543,8 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   otpDigit: {
-    fontSize: 24,
-    fontWeight: "700",
+    fontSize: 22,
+    fontWeight: "800",
     color: colors.brandPrimary,
     textAlign: "center",
   },
@@ -550,7 +557,8 @@ const styles = StyleSheet.create({
   otpHint: {
     fontSize: 11,
     color: colors.muted,
-    marginTop: 4,
+    marginTop: 6,
+    textAlign: "center",
   },
 
   // Warning banner

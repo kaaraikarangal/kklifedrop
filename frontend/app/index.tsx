@@ -336,6 +336,53 @@ export default function Landing() {
           </View>
         </Animated.View>
 
+        {/* Catchy First-Time Donor Guide Banner (Navigates to Detailed Page) */}
+        <Pressable
+          style={styles.firstTimeBannerCard}
+          onPress={() => router.push("/first-time-donor")}
+          testID="first-time-donor-toggle-btn"
+        >
+          <LinearGradient
+            colors={["#DC2626", "#991B1B"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.firstTimeBannerGradient}
+          >
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <View style={styles.firstTimePill}>
+                <Ionicons name="sparkles" size={12} color="#FEF08A" />
+                <Text style={styles.firstTimePillText}>FIRST-TIME HEROES</Text>
+              </View>
+
+              <Text style={styles.firstTimeBannerTitle}>
+                Why First-Time Donors Should Donate Blood?
+              </Text>
+
+              <Text style={styles.firstTimeBannerSub}>
+                Start with us! 1 unit saves up to 3 lives • Pre-donation rules & recovery tips
+              </Text>
+
+              <View style={styles.firstTimeActionRow}>
+                <View style={styles.firstTimeBtnPill}>
+                  <Text style={styles.firstTimeBtnPillText}>View Detailed Guide</Text>
+                  <Ionicons name="arrow-forward" size={13} color="#DC2626" />
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.firstTimeThumbWrap}>
+              <Image
+                source={require("@/assets/images/first_donor_hero.jpg")}
+                style={styles.firstTimeThumbImg}
+                resizeMode="cover"
+              />
+              <View style={styles.firstTimeThumbOverlay}>
+                <Ionicons name="heart" size={14} color="#DC2626" />
+              </View>
+            </View>
+          </LinearGradient>
+        </Pressable>
+
         {/* BLOOD Acrostic Inspiration Banner */}
         <BloodInspirationCard
           onActionPress={() => router.push("/auth/mobile")}
@@ -1216,5 +1263,134 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "800",
+  },
+  firstTimeBannerCard: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    borderRadius: 26,
+    overflow: "hidden",
+    borderWidth: 1.5,
+    borderColor: "rgba(239, 68, 68, 0.18)",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#DC2626",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.18,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 4,
+      },
+      default: {
+        boxShadow: "0 8px 24px rgba(220, 38, 38, 0.14)",
+      },
+    }),
+  },
+  firstTimeBannerGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 18,
+    borderRadius: 26,
+  },
+  firstTimePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(0, 0, 0, 0.28)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    alignSelf: "flex-start",
+    marginBottom: 8,
+  },
+  firstTimePillText: {
+    color: "#FEF08A",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+  },
+  firstTimeBannerTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+    lineHeight: 22,
+  },
+  firstTimeBannerSub: {
+    fontSize: 11.5,
+    color: "#FEE2E2",
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  firstTimeActionRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  firstTimeBtnPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      },
+      default: {
+        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.08)",
+      },
+    }),
+  },
+  firstTimeBtnPillText: {
+    color: "#DC2626",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  firstTimeThumbWrap: {
+    width: 90,
+    height: 90,
+    borderRadius: 22,
+    overflow: "hidden",
+    position: "relative",
+    borderWidth: 2.5,
+    borderColor: "rgba(255, 255, 255, 0.4)",
+    backgroundColor: "#FEE2E2",
+    marginLeft: 10,
+  },
+  firstTimeThumbImg: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 20,
+  },
+  firstTimeThumbOverlay: {
+    position: "absolute",
+    bottom: 5,
+    right: 5,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.15,
+        shadowRadius: 2,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
   },
 });

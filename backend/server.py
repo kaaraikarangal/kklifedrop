@@ -428,7 +428,7 @@ class DonorRegistrationIn(BaseModel):
     district: str
     state: str
     pincode: str
-    aadhaar: str
+    aadhaar: Optional[str] = ""
     availability: Literal["Available", "Not Available"]
     donation_opt_in: bool
     last_donation_date: Optional[str] = None
@@ -446,9 +446,11 @@ class DonorRegistrationIn(BaseModel):
 
     @field_validator("aadhaar")
     @classmethod
-    def valid_aadhaar(cls, v: str) -> str:
+    def valid_aadhaar(cls, v: Optional[str]) -> str:
+        if not v:
+            return ""
         digits = re.sub(r"\D", "", v)
-        if len(digits) != 12:
+        if digits and len(digits) != 12:
             raise ValueError("Aadhaar must be 12 digits")
         return digits
 
@@ -652,6 +654,7 @@ def to_public_donor(doc: dict) -> dict:
     cooldown = get_donor_cooldown(doc)
     return {
         "id": doc["id"],
+        "donor_number": doc.get("donor_number"),
         "full_name": doc["full_name"],
         "blood_group": doc["blood_group"],
         "area": doc["area"],
@@ -933,8 +936,8 @@ async def register_donor(body: DonorRegistrationIn, user: dict = Depends(current
         "district": body.district,
         "state": body.state,
         "pincode": body.pincode,
-        "encrypted_aadhaar": encrypt_aadhaar(body.aadhaar),
-        "masked_aadhaar": mask_aadhaar(body.aadhaar),
+        "encrypted_aadhaar": encrypt_aadhaar(body.aadhaar) if body.aadhaar else "NOT_PROVIDED",
+        "masked_aadhaar": mask_aadhaar(body.aadhaar) if body.aadhaar else "XXXX XXXX ****",
         "availability": body.availability,
         "donation_opt_in": body.donation_opt_in,
         "last_donation_date": body.last_donation_date,

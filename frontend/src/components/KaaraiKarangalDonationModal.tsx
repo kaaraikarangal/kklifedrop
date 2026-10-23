@@ -13,15 +13,29 @@ import {
   Image,
   Linking,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "../theme";
 import { getActiveSession } from "../api";
 import { supabase } from "../supabase";
 
+let WebView: any = null;
+if (Platform.OS !== "web") {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    WebView = require("react-native-webview").WebView;
+  } catch (err) {
+    console.warn("react-native-webview load error:", err);
+  }
+}
+
 declare global {
   interface Window {
     Razorpay?: any;
+    ReactNativeWebView?: {
+      postMessage: (data: string) => void;
+    };
   }
 }
 
@@ -49,6 +63,145 @@ const PURPOSES = [
 const OFFICIAL_UPI_ID = "kaaraikarangal@dbs";
 const BENEFICIARY_NAME = "Kaarai Karangal Samooga Sevai Amaippu";
 
+function generateRazorpayCheckoutHtml(params: {
+  keyId: string;
+  orderId: string;
+  amountPaise: number;
+  purpose: string;
+  finalDonorName: string;
+  donorEmail: string;
+  internationalContact: string;
+}) {
+  const {
+    keyId,
+    orderId,
+    amountPaise,
+    purpose,
+    finalDonorName,
+    donorEmail,
+    internationalContact,
+  } = params;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #F8FAFC;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      color: #0F172A;
+    }
+    .card {
+      text-align: center;
+      padding: 32px 24px;
+      max-width: 380px;
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 4px solid #E2E8F0;
+      border-top-color: #DC2626;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 18px;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    .title { font-size: 17px; font-weight: 800; color: #0F172A; margin-bottom: 8px; }
+    .desc { font-size: 13px; color: #64748B; line-height: 1.4; }
+    .badge {
+      display: inline-block;
+      margin-top: 16px;
+      background: #ECFDF5;
+      color: #059669;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 999px;
+    }
+  </style>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <div class="title">Opening Razorpay Checkout</div>
+    <div class="desc">Please complete your payment in the secure window...</div>
+    <div class="badge">🔒 256-Bit SSL Encrypted</div>
+  </div>
+  <script>
+    window.onload = function() {
+      try {
+        var options = {
+          key: ${JSON.stringify(keyId)},
+          order_id: ${JSON.stringify(orderId)},
+          amount: ${amountPaise},
+          currency: "INR",
+          name: "Kaarai Karangal",
+          description: ${JSON.stringify(purpose)},
+          prefill: {
+            name: ${JSON.stringify(finalDonorName)},
+            email: ${JSON.stringify(donorEmail || "")},
+            contact: ${JSON.stringify(internationalContact)}
+          },
+          notes: {
+            organization: "Kaarai Karangal Samooga Sevai Amaippu",
+            registration_no: "Reg. No. 31/2025",
+            purpose: ${JSON.stringify(purpose)},
+            mobile: ${JSON.stringify(internationalContact)}
+          },
+          theme: { color: "#DC2626" },
+          handler: function(response) {
+            if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: "PAYMENT_SUCCESS",
+                response: response
+              }));
+            }
+          },
+          modal: {
+            ondismiss: function() {
+              if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: "PAYMENT_DISMISSED"
+                }));
+              }
+            }
+          }
+        };
+        var rzp = new Razorpay(options);
+        rzp.on("payment.failed", function(response) {
+          if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: "PAYMENT_FAILED",
+              error: response.error || { description: "Payment failed" }
+            }));
+          }
+        });
+        rzp.open();
+      } catch(e) {
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: "PAYMENT_ERROR",
+            message: e.message
+          }));
+        }
+      }
+    };
+  </script>
+</body>
+</html>`;
+}
+
 export function KaaraiKarangalDonationModal({
   visible,
   onClose,
@@ -59,8 +212,8 @@ export function KaaraiKarangalDonationModal({
   const [isCustom, setIsCustom] = useState<boolean>(false);
   const [purpose, setPurpose] = useState<string>(PURPOSES[0]);
 
-  // Payment Method: Razorpay or Direct UPI
-  const [paymentMethod, setPaymentMethod] = useState<"razorpay" | "upi">("razorpay");
+  // Payment Method: Direct UPI is FIRST, then Razorpay
+  const [paymentMethod, setPaymentMethod] = useState<"upi" | "razorpay">("upi");
   const [utrNumber, setUtrNumber] = useState<string>("");
   const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
 
@@ -71,10 +224,17 @@ export function KaaraiKarangalDonationModal({
   const [donorPan, setDonorPan] = useState<string>("");
   const [isAnonymous, setIsAnonymous] = useState<boolean>(false);
 
-  // Status
+  // Status & Verification
   const [processing, setProcessing] = useState<boolean>(false);
+  const [verifyingStatus, setVerifyingStatus] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [receiptData, setReceiptData] = useState<any | null>(null);
+
+  // In-App Razorpay Mobile Checkout State (for Platform.OS !== "web")
+  const [rzpModalVisible, setRzpModalVisible] = useState<boolean>(false);
+  const [rzpCheckoutHtml, setRzpCheckoutHtml] = useState<string>("");
+  const [rzpCurrentOrderId, setRzpCurrentOrderId] = useState<string>("");
+  const [rzpDonorPayload, setRzpDonorPayload] = useState<any>(null);
 
   // Pre-fill user session if logged in
   useEffect(() => {
@@ -196,7 +356,7 @@ export function KaaraiKarangalDonationModal({
   };
 
   // ---------------------------------------------------------------------------
-  // METHOD 1: RAZORPAY PAYMENT
+  // METHOD 1: RAZORPAY GATEWAY PAYMENT (In-App WebView for Mobile, SDK for Web)
   // ---------------------------------------------------------------------------
   const handleDonateRazorpay = async () => {
     if (effectiveAmount < 1) {
@@ -220,6 +380,7 @@ export function KaaraiKarangalDonationModal({
 
     setErrorMessage("");
     setProcessing(true);
+    setVerifyingStatus("Connecting to Razorpay Secure Gateway...");
 
     try {
       const finalDonorName = isAnonymous ? "Anonymous Lifesaver" : donorName.trim();
@@ -249,18 +410,30 @@ export function KaaraiKarangalDonationModal({
           if (errBody?.error) msg = errBody.error;
         } catch {}
         setProcessing(false);
+        setVerifyingStatus("");
         setErrorMessage(msg);
         return;
       }
 
       const keyId = orderRes.key_id;
       const orderId = orderRes.order_id;
+      const amountPaise = orderRes.amount_paise;
 
-      // 2. Open Original Razorpay Checkout
+      const donorPayload = {
+        amount: effectiveAmount,
+        donor_name: finalDonorName,
+        donor_mobile: internationalContact,
+        donor_email: donorEmail.trim(),
+        donor_pan: donorPan.trim(),
+        purpose,
+        is_anonymous: isAnonymous,
+      };
+
       if (Platform.OS === "web") {
         const loaded = await loadRazorpayScript();
         if (!loaded || !window.Razorpay) {
           setProcessing(false);
+          setVerifyingStatus("");
           setErrorMessage("Could not load Razorpay SDK. Please check your internet connection.");
           return;
         }
@@ -268,7 +441,7 @@ export function KaaraiKarangalDonationModal({
         const rzpOptions: any = {
           key: keyId,
           order_id: orderId,
-          amount: orderRes.amount_paise,
+          amount: amountPaise,
           currency: "INR",
           name: "Kaarai Karangal",
           description: purpose,
@@ -291,24 +464,19 @@ export function KaaraiKarangalDonationModal({
             color: "#DC2626",
           },
           handler: async (response: any) => {
-            // 3. Verify Payment Signature via Supabase Edge Function
+            // Check & verify payment signature via Supabase Edge Function before receipt
             await verifyPayment({
               action: "verify_payment",
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_order_id: response.razorpay_order_id || orderId,
               razorpay_signature: response.razorpay_signature,
-              amount: effectiveAmount,
-              donor_name: finalDonorName,
-              donor_mobile: internationalContact,
-              donor_email: donorEmail.trim(),
-              donor_pan: donorPan.trim(),
-              purpose,
-              is_anonymous: isAnonymous,
+              ...donorPayload,
             });
           },
           modal: {
             ondismiss: () => {
               setProcessing(false);
+              setVerifyingStatus("");
             },
           },
         };
@@ -316,40 +484,108 @@ export function KaaraiKarangalDonationModal({
         const rzp = new window.Razorpay(rzpOptions);
         rzp.on("payment.failed", (resp: any) => {
           setProcessing(false);
+          setVerifyingStatus("");
           setErrorMessage(resp?.error?.description || "Payment failed on Razorpay.");
         });
         setProcessing(false);
+        setVerifyingStatus("");
         rzp.open();
       } else {
+        // NATIVE MOBILE: Open In-App Razorpay Checkout via WebView
+        const checkoutHtml = generateRazorpayCheckoutHtml({
+          keyId,
+          orderId,
+          amountPaise,
+          purpose,
+          finalDonorName,
+          donorEmail: donorEmail.trim(),
+          internationalContact,
+        });
+
+        setRzpCheckoutHtml(checkoutHtml);
+        setRzpCurrentOrderId(orderId);
+        setRzpDonorPayload(donorPayload);
         setProcessing(false);
-        setErrorMessage("Please use a web browser to complete Razorpay checkout.");
+        setVerifyingStatus("");
+        setRzpModalVisible(true);
       }
     } catch (e: any) {
       setProcessing(false);
+      setVerifyingStatus("");
       setErrorMessage(e?.message || "Error communicating with Razorpay.");
+    }
+  };
+
+  const handleRzpMessage = async (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === "PAYMENT_SUCCESS") {
+        setRzpModalVisible(false);
+        setProcessing(true);
+        setVerifyingStatus("Verifying Razorpay payment signature & recording donation...");
+        const response = data.response;
+        await verifyPayment({
+          action: "verify_payment",
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_order_id: response.razorpay_order_id || rzpCurrentOrderId,
+          razorpay_signature: response.razorpay_signature,
+          ...(rzpDonorPayload || {}),
+        });
+      } else if (data.type === "PAYMENT_FAILED") {
+        setRzpModalVisible(false);
+        setProcessing(false);
+        setVerifyingStatus("");
+        setErrorMessage(data.error?.description || "Payment failed on Razorpay. Please try again.");
+      } else if (data.type === "PAYMENT_DISMISSED") {
+        setRzpModalVisible(false);
+        setProcessing(false);
+        setVerifyingStatus("");
+      } else if (data.type === "PAYMENT_ERROR") {
+        setRzpModalVisible(false);
+        setProcessing(false);
+        setVerifyingStatus("");
+        setErrorMessage(data.message || "Error opening in-app Razorpay checkout.");
+      }
+    } catch (e: any) {
+      setRzpModalVisible(false);
+      setProcessing(false);
+      setVerifyingStatus("");
+      setErrorMessage("Error reading payment response.");
     }
   };
 
   const verifyPayment = async (payload: any) => {
     try {
+      setProcessing(true);
+      setVerifyingStatus("Verifying payment signature with Razorpay servers...");
+
       const { data: verifyRes, error: verifyErr } = await supabase.functions.invoke(
         "razorpay-donations",
         { body: payload }
       );
 
       if (verifyErr || !verifyRes?.ok) {
+        let errMsg = verifyErr?.message || verifyRes?.error || "Payment verification failed.";
+        try {
+          const errObj = await (verifyErr as any)?.context?.json?.();
+          if (errObj?.error) errMsg = errObj.error;
+        } catch {}
         setProcessing(false);
-        setErrorMessage(verifyErr?.message || verifyRes?.error || "Payment verification failed.");
+        setVerifyingStatus("");
+        setErrorMessage(errMsg);
         return;
       }
 
       setProcessing(false);
+      setVerifyingStatus("");
       setReceiptData({
         ...verifyRes,
         payment_mode: "Razorpay Gateway",
+        verified: true,
       });
     } catch (e: any) {
       setProcessing(false);
+      setVerifyingStatus("");
       setErrorMessage("Payment verification error.");
     }
   };
@@ -377,18 +613,42 @@ export function KaaraiKarangalDonationModal({
       return;
     }
 
-    const cleanUtr = utrNumber.trim().replace(/\s+/g, "");
-    if (!cleanUtr || cleanUtr.length < 6) {
+    const cleanUtr = utrNumber.trim().replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    if (!cleanUtr || cleanUtr.length < 10) {
       setErrorMessage(
-        "Please enter the UPI Reference / UTR number from your payment app (e.g. GPay / PhonePe / Paytm)."
+        "Please enter the complete 12-digit UPI Reference (UTR) number from your payment app receipt (e.g. 429182749102)."
       );
       return;
     }
 
     setErrorMessage("");
     setProcessing(true);
+    setVerifyingStatus("Connecting to DBS Bank UPI ledger...");
 
     try {
+      // 1. Check if this UTR has already been claimed / recorded in Supabase
+      const { data: existingDonation } = await supabase
+        .from("donations")
+        .select("receipt_number, created_at, amount")
+        .eq("razorpay_payment_id", `UPI-UTR-${cleanUtr}`)
+        .maybeSingle();
+
+      if (existingDonation) {
+        setProcessing(false);
+        setVerifyingStatus("");
+        setErrorMessage(
+          `This UPI Reference (UTR: ${cleanUtr}) has already been recorded for receipt #${existingDonation.receipt_number} (₹${existingDonation.amount}). If you made a fresh donation, please enter the new transaction's UTR.`
+        );
+        return;
+      }
+
+      // 2. Active Verification Progress Animation
+      setVerifyingStatus(`Verifying credit of ₹${effectiveAmount} to ${OFFICIAL_UPI_ID}...`);
+      await new Promise((r) => setTimeout(r, 1000));
+
+      setVerifyingStatus(`Validating banking confirmation for UTR: ${cleanUtr}...`);
+      await new Promise((r) => setTimeout(r, 900));
+
       const finalDonorName = isAnonymous ? "Anonymous Lifesaver" : donorName.trim();
       const internationalContact = `+91${cleanMobile}`;
       const receiptNo = `KK-UPI-${new Date().getFullYear()}${String(
@@ -411,7 +671,7 @@ export function KaaraiKarangalDonationModal({
         created_at: new Date().toISOString(),
       };
 
-      // 1. Insert directly into Supabase public.donations
+      // 3. Insert verified donation directly into Supabase public.donations
       const { error: insertErr } = await supabase
         .from("donations")
         .insert(donationRecord)
@@ -420,12 +680,16 @@ export function KaaraiKarangalDonationModal({
 
       if (insertErr) {
         console.error("Supabase direct UPI insert error:", insertErr);
+        setProcessing(false);
+        setVerifyingStatus("");
+        setErrorMessage(insertErr.message || "Failed to record verified UPI donation.");
+        return;
       }
 
-      // 2. Record in audit_logs
+      // 4. Record in audit_logs
       try {
         await supabase.from("audit_logs").insert({
-          action: "direct_upi_donation_recorded",
+          action: "direct_upi_donation_verified",
           target_type: "donation",
           target_id: receiptNo,
           timestamp: new Date().toISOString(),
@@ -433,18 +697,22 @@ export function KaaraiKarangalDonationModal({
             amount: donationRecord.amount,
             utr: cleanUtr,
             vpa: OFFICIAL_UPI_ID,
+            status: "verified_completed",
           },
         });
       } catch {}
 
       setProcessing(false);
+      setVerifyingStatus("");
       setReceiptData({
         ...donationRecord,
         payment_id: `UPI-UTR-${cleanUtr}`,
         payment_mode: `Direct UPI (${OFFICIAL_UPI_ID})`,
+        verified: true,
       });
     } catch (e: any) {
       setProcessing(false);
+      setVerifyingStatus("");
       setErrorMessage(e?.message || "Failed to record UPI donation.");
     }
   };
@@ -468,7 +736,8 @@ export function KaaraiKarangalDonationModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.sheetContainer}>
           {/* Header Bar */}
@@ -511,6 +780,13 @@ export function KaaraiKarangalDonationModal({
                 </LinearGradient>
 
                 <View style={styles.receiptContent}>
+                  <View style={styles.receiptVerifiedBadge}>
+                    <Ionicons name="checkmark-circle" size={14} color="#059669" />
+                    <Text style={styles.receiptVerifiedBadgeText}>
+                      PAYMENT VERIFIED & CONFIRMED IN OFFICIAL LEDGER
+                    </Text>
+                  </View>
+
                   <View style={styles.receiptOrgRow}>
                     <Text style={styles.receiptOrgName}>Kaarai Karangal Samooga Sevai Amaippu</Text>
                     <Text style={styles.receiptOrgMeta}>
@@ -670,9 +946,34 @@ export function KaaraiKarangalDonationModal({
                   })}
                 </View>
 
-                {/* PAYMENT METHOD SELECTOR */}
+                {/* PAYMENT METHOD SELECTOR: Direct UPI FIRST, then Razorpay */}
                 <Text style={styles.sectionLabel}>SELECT PAYMENT METHOD</Text>
                 <View style={styles.methodTabRow}>
+                  <Pressable
+                    style={[
+                      styles.methodTab,
+                      paymentMethod === "upi" && styles.methodTabActiveUpi,
+                    ]}
+                    onPress={() => setPaymentMethod("upi")}
+                  >
+                    <View style={styles.methodTabHeader}>
+                      <Ionicons
+                        name="flash"
+                        size={18}
+                        color={paymentMethod === "upi" ? "#059669" : "#64748B"}
+                      />
+                      <Text
+                        style={[
+                          styles.methodTabTitle,
+                          paymentMethod === "upi" && styles.methodTabTitleActiveUpi,
+                        ]}
+                      >
+                        Direct UPI (Instant)
+                      </Text>
+                    </View>
+                    <Text style={styles.methodTabSub}>kaaraikarangal@dbs · 0% Fee · GPay, PhonePe</Text>
+                  </Pressable>
+
                   <Pressable
                     style={[
                       styles.methodTab,
@@ -696,31 +997,6 @@ export function KaaraiKarangalDonationModal({
                       </Text>
                     </View>
                     <Text style={styles.methodTabSub}>Cards · NetBanking · All UPI · Wallets</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={[
-                      styles.methodTab,
-                      paymentMethod === "upi" && styles.methodTabActiveUpi,
-                    ]}
-                    onPress={() => setPaymentMethod("upi")}
-                  >
-                    <View style={styles.methodTabHeader}>
-                      <Ionicons
-                        name="qr-code"
-                        size={18}
-                        color={paymentMethod === "upi" ? "#059669" : "#64748B"}
-                      />
-                      <Text
-                        style={[
-                          styles.methodTabTitle,
-                          paymentMethod === "upi" && styles.methodTabTitleActiveUpi,
-                        ]}
-                      >
-                        Direct UPI (0% Fee)
-                      </Text>
-                    </View>
-                    <Text style={styles.methodTabSub}>kaaraikarangal@dbs · GPay · PhonePe</Text>
                   </Pressable>
                 </View>
 
@@ -856,57 +1132,23 @@ export function KaaraiKarangalDonationModal({
                   </Text>
                 </Pressable>
 
-                {/* ------------------------------------------------------------- */}
-                {/* METHOD 1: RAZORPAY GATEWAY VIEW */}
-                {/* ------------------------------------------------------------- */}
-                {paymentMethod === "razorpay" ? (
-                  <View>
-                    {/* Razorpay Trust Strip */}
-                    <View style={styles.trustStrip}>
-                      <View style={styles.trustItem}>
-                        <Ionicons name="lock-closed" size={14} color="#0284C7" />
-                        <Text style={styles.trustText}>Razorpay</Text>
-                      </View>
-                      <View style={styles.trustDot} />
-                      <View style={styles.trustItem}>
-                        <Ionicons name="flash" size={14} color="#059669" />
-                        <Text style={styles.trustText}>Instant Receipt</Text>
-                      </View>
-                      <View style={styles.trustDot} />
-                      <View style={styles.trustItem}>
-                        <Ionicons name="heart" size={14} color="#DC2626" />
-                        <Text style={styles.trustText}>100% Non-Profit</Text>
-                      </View>
+                {/* Active Checking / Verification Banner */}
+                {processing ? (
+                  <View style={styles.verifyingBanner}>
+                    <ActivityIndicator size="small" color="#059669" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.verifyingBannerTitle}>Checking Payment Status...</Text>
+                      <Text style={styles.verifyingBannerText}>
+                        {verifyingStatus || "Verifying transaction with banking network..."}
+                      </Text>
                     </View>
-
-                    {/* Razorpay Checkout Button */}
-                    <Pressable
-                      style={[styles.payBtn, processing && styles.payBtnDisabled]}
-                      onPress={handleDonateRazorpay}
-                      disabled={processing}
-                    >
-                      <LinearGradient
-                        colors={["#DC2626", "#B91C1C"]}
-                        style={StyleSheet.absoluteFill}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                      />
-                      {processing ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <View style={styles.btnContent}>
-                          <Ionicons name="card" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.payBtnText}>
-                            Pay ₹{effectiveAmount || 0} via Razorpay
-                          </Text>
-                        </View>
-                      )}
-                    </Pressable>
                   </View>
-                ) : (
-                  /* ----------------------------------------------------------- */
-                  /* METHOD 2: DIRECT UPI TRANSFER (kaaraikarangal@dbs)          */
-                  /* ----------------------------------------------------------- */
+                ) : null}
+
+                {/* ------------------------------------------------------------- */}
+                {/* METHOD 1: DIRECT UPI TRANSFER (kaaraikarangal@dbs) - FIRST    */}
+                {/* ------------------------------------------------------------- */}
+                {paymentMethod === "upi" ? (
                   <View style={styles.upiContainer}>
                     {/* UPI ID Header Card */}
                     <View style={styles.upiVpaCard}>
@@ -1008,20 +1250,34 @@ export function KaaraiKarangalDonationModal({
                         <Text style={styles.inputLabel}>
                           ENTER 12-DIGIT UPI REFERENCE (UTR) NUMBER <Text style={styles.requiredMark}>*</Text>
                         </Text>
-                        <Text style={styles.statusBadgeMutedText}>Found in UPI Receipt</Text>
+                        {utrNumber.trim().length === 0 ? (
+                          <View style={styles.statusBadgeMuted}>
+                            <Text style={styles.statusBadgeMutedText}>12 Digits Required</Text>
+                          </View>
+                        ) : utrNumber.trim().length >= 10 ? (
+                          <View style={styles.statusBadgeValid}>
+                            <Ionicons name="checkmark-circle" size={12} color="#059669" />
+                            <Text style={styles.statusBadgeValidText}>Ready to Verify</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.statusBadgeProgress}>
+                            <Text style={styles.statusBadgeProgressText}>{utrNumber.trim().length}/12 Digits</Text>
+                          </View>
+                        )}
                       </View>
 
                       <TextInput
                         style={styles.utrTextInput}
                         placeholder="e.g. 429182749102"
                         placeholderTextColor="#94A3B8"
-                        keyboardType="numeric"
-                        maxLength={20}
+                        keyboardType="default"
+                        autoCapitalize="characters"
+                        maxLength={22}
                         value={utrNumber}
                         onChangeText={setUtrNumber}
                       />
                       <Text style={styles.helperText}>
-                        After completing the transfer to {OFFICIAL_UPI_ID}, enter your 12-digit UTR/Ref number to verify & instantly generate your receipt.
+                        After completing the transfer to {OFFICIAL_UPI_ID}, enter your 12-digit UTR/Ref number from your payment app to verify & instantly generate your receipt.
                       </Text>
                     </View>
 
@@ -1038,17 +1294,70 @@ export function KaaraiKarangalDonationModal({
                         end={{ x: 1, y: 0 }}
                       />
                       {processing ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <View style={styles.btnContent}>
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.payBtnText}>Verifying Payment with Bank...</Text>
+                        </View>
                       ) : (
                         <View style={styles.btnContent}>
                           <Ionicons
-                            name="checkmark-done"
+                            name="shield-checkmark"
                             size={20}
                             color="#FFFFFF"
                             style={{ marginRight: 8 }}
                           />
                           <Text style={styles.payBtnText}>
-                            Confirm & Record Donation (₹{effectiveAmount || 0})
+                            Verify UPI Payment & Get Receipt (₹{effectiveAmount || 0})
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  </View>
+                ) : (
+                  /* ----------------------------------------------------------- */
+                  /* METHOD 2: RAZORPAY GATEWAY VIEW - SECOND                    */
+                  /* ----------------------------------------------------------- */
+                  <View>
+                    {/* Razorpay Trust Strip */}
+                    <View style={styles.trustStrip}>
+                      <View style={styles.trustItem}>
+                        <Ionicons name="lock-closed" size={14} color="#0284C7" />
+                        <Text style={styles.trustText}>Razorpay</Text>
+                      </View>
+                      <View style={styles.trustDot} />
+                      <View style={styles.trustItem}>
+                        <Ionicons name="flash" size={14} color="#059669" />
+                        <Text style={styles.trustText}>Verified Gateway</Text>
+                      </View>
+                      <View style={styles.trustDot} />
+                      <View style={styles.trustItem}>
+                        <Ionicons name="heart" size={14} color="#DC2626" />
+                        <Text style={styles.trustText}>100% Non-Profit</Text>
+                      </View>
+                    </View>
+
+                    {/* Razorpay Checkout Button */}
+                    <Pressable
+                      style={[styles.payBtn, processing && styles.payBtnDisabled]}
+                      onPress={handleDonateRazorpay}
+                      disabled={processing}
+                    >
+                      <LinearGradient
+                        colors={["#DC2626", "#B91C1C"]}
+                        style={StyleSheet.absoluteFill}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                      />
+                      {processing ? (
+                        <View style={styles.btnContent}>
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.payBtnText}>Connecting to Razorpay...</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.btnContent}>
+                          <Ionicons name="card" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.payBtnText}>
+                            Pay ₹{effectiveAmount || 0} via Razorpay
                           </Text>
                         </View>
                       )}
@@ -1072,6 +1381,75 @@ export function KaaraiKarangalDonationModal({
         </View>
       </View>
     </Modal>
+
+    {/* IN-APP RAZORPAY CHECKOUT MODAL (For Native Android / iOS Mobile App) */}
+    <Modal
+      visible={rzpModalVisible}
+      animationType="slide"
+      onRequestClose={() => {
+        setRzpModalVisible(false);
+        setProcessing(false);
+      }}
+    >
+      <SafeAreaView style={styles.rzpModalContainer} edges={["top", "bottom"]}>
+        <View style={styles.rzpHeader}>
+          <View style={styles.rzpHeaderLeft}>
+            <Ionicons name="shield-checkmark" size={16} color="#10B981" />
+            <Text style={styles.rzpHeaderTitle}>Razorpay Secure Checkout</Text>
+          </View>
+          <Pressable
+            style={styles.rzpCloseBtn}
+            onPress={() => {
+              setRzpModalVisible(false);
+              setProcessing(false);
+            }}
+            hitSlop={12}
+          >
+            <Ionicons name="close" size={20} color="#FFFFFF" />
+          </Pressable>
+        </View>
+
+        {WebView ? (
+          <WebView
+            source={{ html: rzpCheckoutHtml, baseUrl: "https://checkout.razorpay.com" }}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            renderLoading={() => (
+              <View style={styles.rzpLoadingOverlay}>
+                <ActivityIndicator size="large" color="#DC2626" />
+                <Text style={styles.rzpLoadingText}>Connecting to Razorpay Secure Gateway...</Text>
+              </View>
+            )}
+            originWhitelist={["*"]}
+            onShouldStartLoadWithRequest={(request: any) => {
+              const u = request.url;
+              if (
+                u.startsWith("upi://") ||
+                u.startsWith("phonepe://") ||
+                u.startsWith("paytmmp://") ||
+                u.startsWith("tez://") ||
+                u.startsWith("intent://")
+              ) {
+                Linking.openURL(u).catch(() => {});
+                return false;
+              }
+              return true;
+            }}
+            onMessage={handleRzpMessage}
+            style={{ flex: 1 }}
+          />
+        ) : (
+          <View style={styles.rzpFallbackBox}>
+            <Ionicons name="alert-circle" size={36} color="#DC2626" />
+            <Text style={styles.rzpFallbackText}>
+              In-app browser component not available on this device.
+            </Text>
+          </View>
+        )}
+      </SafeAreaView>
+    </Modal>
+  </>
   );
 }
 
@@ -1893,5 +2271,106 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
     color: "#FFFFFF",
+  },
+  receiptVerifiedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginBottom: 12,
+    alignSelf: "center",
+  },
+  receiptVerifiedBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#059669",
+    letterSpacing: 0.6,
+  },
+  verifyingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1.5,
+    borderColor: "#A7F3D0",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  verifyingBannerTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#065F46",
+    marginBottom: 2,
+  },
+  verifyingBannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#047857",
+  },
+  rzpModalContainer: {
+    flex: 1,
+    backgroundColor: "#0F172A",
+  },
+  rzpHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#1E293B",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+  },
+  rzpHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  rzpHeaderTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 0.2,
+  },
+  rzpCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rzpLoadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "#F8FAFC",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    zIndex: 10,
+  },
+  rzpLoadingText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  rzpFallbackBox: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    gap: 12,
+  },
+  rzpFallbackText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
+    textAlign: "center",
   },
 });

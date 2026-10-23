@@ -73,6 +73,8 @@ export const radius = {
   sm: 6,
   md: 12,
   lg: 20,
+  xl: 24,
+  "2xl": 32,
   pill: 999,
 };
 

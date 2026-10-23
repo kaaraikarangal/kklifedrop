@@ -9,7 +9,7 @@ import { api } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { BrandLogo } from "@/src/components/BrandLogo";
 import { BloodInspirationCard } from "@/src/components/BloodInspirationCard";
-import { KaaraiKarangalDonationModal } from "@/src/components/KaaraiKarangalDonationModal";
+
 import {
   subscribePendingCount,
   refreshPendingNotifications,
@@ -51,13 +51,7 @@ export default function Home() {
   const [factIdx, setFactIdx] = useState(0);
   const currentFact = DID_YOU_KNOW_HIGHLIGHTS[factIdx] || DID_YOU_KNOW_HIGHLIGHTS[0];
 
-  const [donationModalVisible, setDonationModalVisible] = useState(false);
-  const [selectedDonationAmount, setSelectedDonationAmount] = useState(500);
 
-  const openDonation = (amount: number = 500) => {
-    setSelectedDonationAmount(amount);
-    setDonationModalVisible(true);
-  };
 
   const nextFact = () => {
     setFactIdx((prev) => (prev + 1) % DID_YOU_KNOW_HIGHLIGHTS.length);
@@ -352,81 +346,6 @@ export default function Home() {
           <Ionicons name="chevron-forward" size={18} color="#FFFFFF" />
         </Pressable>
 
-        {/* ========================================================================= */}
-        {/* SUPPORT KAARAI KARANGAL — COMPACT & ELEGANT LIFE-SAVING SUPPORT CARD */}
-        {/* ========================================================================= */}
-        <View style={styles.donationHeroWrap}>
-          <LinearGradient
-            colors={["#0F172A", "#1E1B4B", "#2D0A14"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.donationHeroCard}
-          >
-            {/* Header: Icon + Title & Tagline + Badge */}
-            <View style={styles.supportHeaderRow}>
-              <View style={styles.supportHeaderLeft}>
-                <View style={styles.supportHeartBadge}>
-                  <Ionicons name="heart" size={16} color="#EF4444" />
-                </View>
-                <View style={styles.supportHeaderTextWrap}>
-                  <View style={styles.supportTitleBadgeRow}>
-                    <Text style={styles.supportTitle}>Support Kaarai Karangal</Text>
-                    <View style={styles.supportOrgTag}>
-                      <Text style={styles.supportOrgTagText}>REG: 31/2025</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.supportSub} numberOfLines={1} ellipsizeMode="tail">
-                    Powering emergency blood courier & patient assistance in Karaikal
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Middle Row: Quick Chips + Primary CTA Button */}
-            <View style={styles.supportActionRow}>
-              <View style={styles.supportChipsGroup}>
-                {[100, 250, 500, 1000].map((amt) => (
-                  <Pressable
-                    key={amt}
-                    style={styles.supportChip}
-                    onPress={() => openDonation(amt)}
-                    testID={`home-donate-chip-${amt}`}
-                  >
-                    <Text style={styles.supportChipText}>₹{amt}</Text>
-                  </Pressable>
-                ))}
-              </View>
-
-              <Pressable
-                style={styles.supportDonateBtn}
-                onPress={() => openDonation(selectedDonationAmount)}
-                testID="home-donate-razorpay-cta"
-              >
-                <LinearGradient
-                  colors={["#DC2626", "#B91C1C"]}
-                  style={StyleSheet.absoluteFill}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                />
-                <Text style={styles.supportDonateBtnText}>Donate</Text>
-                <Ionicons name="arrow-forward" size={13} color="#FFFFFF" style={{ marginLeft: 3 }} />
-              </Pressable>
-            </View>
-
-            {/* Micro Trust Strip */}
-            <View style={styles.supportMicroTrust}>
-              <View style={styles.supportTrustItem}>
-                <Ionicons name="shield-checkmark" size={11} color="#FBBF24" />
-                <Text style={styles.supportTrustText}>80G Tax Exemption</Text>
-              </View>
-              <View style={styles.supportTrustDot} />
-              <View style={styles.supportTrustItem}>
-                <Ionicons name="lock-closed" size={11} color="#38BDF8" />
-                <Text style={styles.supportTrustText}>Instant Official Receipt</Text>
-              </View>
-            </View>
-          </LinearGradient>
-        </View>
 
         {/* ========================================================================= */}
         {/* BLOOD DONATION FACTS & FREQUENCY SECTION */}
@@ -690,12 +609,6 @@ export default function Home() {
         </View>
       </ScrollView>
 
-      {/* Kaarai Karangal Razorpay Donation Modal */}
-      <KaaraiKarangalDonationModal
-        visible={donationModalVisible}
-        onClose={() => setDonationModalVisible(false)}
-        initialAmount={selectedDonationAmount}
-      />
     </View>
   );
 }
@@ -1389,146 +1302,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#334155",
   },
-  // SUPPORT KAARAI KARANGAL COMPACT CARD STYLES
-  donationHeroWrap: {
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    borderRadius: 16,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  donationHeroCard: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  supportHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  supportHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flex: 1,
-  },
-  supportHeartBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(239, 68, 68, 0.15)",
-    borderWidth: 1,
-    borderColor: "rgba(239, 68, 68, 0.3)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  supportHeaderTextWrap: {
-    flex: 1,
-  },
-  supportTitleBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  supportTitle: {
-    fontSize: 15,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    letterSpacing: -0.2,
-  },
-  supportOrgTag: {
-    backgroundColor: "rgba(16, 185, 129, 0.18)",
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.3)",
-  },
-  supportOrgTagText: {
-    fontSize: 9,
-    fontWeight: "900",
-    color: "#34D399",
-    letterSpacing: 0.5,
-  },
-  supportSub: {
-    fontSize: 11,
-    color: "#94A3B8",
-    marginTop: 1,
-    lineHeight: 14,
-  },
-  supportActionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  supportChipsGroup: {
-    flexDirection: "row",
-    gap: 5,
-    flex: 1,
-  },
-  supportChip: {
-    flex: 1,
-    paddingVertical: 6,
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.14)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  supportChipText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#FFFFFF",
-  },
-  supportDonateBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    height: 32,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    overflow: "hidden",
-    shadowColor: "#DC2626",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  supportDonateBtnText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    letterSpacing: 0.2,
-  },
-  supportMicroTrust: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingTop: 2,
-  },
-  supportTrustItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-  },
-  supportTrustText: {
-    fontSize: 9.5,
-    color: "#94A3B8",
-    fontWeight: "600",
-  },
-  supportTrustDot: {
-    width: 2.5,
-    height: 2.5,
-    borderRadius: 1.5,
-    backgroundColor: "#475569",
-  },
+
 });
 

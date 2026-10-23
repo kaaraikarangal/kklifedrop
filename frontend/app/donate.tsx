@@ -38,8 +38,8 @@ export default function DonateScreen() {
               <Text style={styles.orgBadgeText}>OFFICIAL NON-PROFIT • REG: 31/2025</Text>
             </View>
             <View style={styles.rzpBadge}>
-              <Ionicons name="flash" size={12} color="#38BDF8" />
-              <Text style={styles.rzpBadgeText}>Razorpay & UPI: kaaraikarangal@dbs</Text>
+              <Ionicons name="flash" size={12} color="#10B981" />
+              <Text style={styles.rzpBadgeText}>UPI: kaaraikarangal@dbs & Razorpay</Text>
             </View>
           </View>
 
@@ -70,13 +70,13 @@ export default function DonateScreen() {
 
           <Pressable style={styles.donateBtn} onPress={() => setModalVisible(true)}>
             <LinearGradient
-              colors={["#DC2626", "#B91C1C"]}
+              colors={["#059669", "#047857"]}
               style={StyleSheet.absoluteFill}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
             />
-            <Ionicons name="heart" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.donateBtnText}>Donate via Razorpay or UPI (kaaraikarangal@dbs)</Text>
+            <Ionicons name="flash" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+            <Text style={styles.donateBtnText}>Donate via Direct UPI or Razorpay</Text>
           </Pressable>
         </LinearGradient>
 

@@ -89,7 +89,11 @@ export default function Notifications() {
     }
   }
 
-  const pendingItems = items.filter((n) => !n.response);
+  const pendingItems = items.filter((n) => {
+    const req = n.request || n.blood_requests || {};
+    const isClosed = req.status === "Fulfilled" || req.status === "Cancelled" || n.response === "Revoked - Request Fulfilled";
+    return !n.response && !isClosed;
+  });
   const displayedItems = activeFilter === "pending" ? pendingItems : items;
 
   return (
@@ -201,7 +205,8 @@ export default function Notifications() {
           const units = req.units_required || 1;
           const urgency = req.urgency || "Normal";
           const isEmergency = urgency === "Emergency";
-          const isPending = !n.response;
+          const isFulfilledOrRevoked = req.status === "Fulfilled" || n.response === "Revoked - Request Fulfilled";
+          const isPending = !n.response && !isFulfilledOrRevoked;
           const isCurrentLoading = respondingId === n.id;
 
           return (
@@ -209,19 +214,19 @@ export default function Notifications() {
               style={[
                 styles.card,
                 isPending && styles.cardPending,
-                isEmergency && styles.cardEmergency,
+                isEmergency && !isFulfilledOrRevoked && styles.cardEmergency,
               ]}
               testID={`notif-${n.id}`}
             >
               {/* Card Header & Badge */}
               <View style={styles.cardHeaderRow}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
-                  <View style={[styles.iconBox, isEmergency ? styles.iconEmergency : styles.iconNormal]}>
-                    <Ionicons name="water" size={18} color="#FFFFFF" />
+                  <View style={[styles.iconBox, isFulfilledOrRevoked ? { backgroundColor: "#16A34A" } : isEmergency ? styles.iconEmergency : styles.iconNormal]}>
+                    <Ionicons name={isFulfilledOrRevoked ? "checkmark-done" : "water"} size={18} color="#FFFFFF" />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardTitle}>
-                      {isEmergency ? "🚨 EMERGENCY: " : "🩸 Blood Needed: "}
+                      {isFulfilledOrRevoked ? "✅ FULFILLED: " : isEmergency ? "🚨 EMERGENCY: " : "🩸 Blood Needed: "}
                       <Text style={{ color: colors.brandPrimary }}>{bg}</Text>
                     </Text>
                     <Text style={styles.cardHospital}>
@@ -230,7 +235,14 @@ export default function Notifications() {
                   </View>
                 </View>
 
-                {isPending ? (
+                {isFulfilledOrRevoked ? (
+                  <View style={[styles.respondedBadge, { backgroundColor: "#DCFCE7", borderWidth: 1, borderColor: "#86EFAC" }]}>
+                    <Ionicons name="checkmark-done" size={13} color="#15803D" />
+                    <Text style={[styles.respondedText, { color: "#15803D", fontWeight: "800" }]}>
+                      Blood Arranged
+                    </Text>
+                  </View>
+                ) : isPending ? (
                   <View style={styles.pendingItemBadge}>
                     <View style={styles.beaconDotSmall} />
                     <Text style={styles.pendingItemBadgeText}>ACTION REQUIRED</Text>
@@ -248,7 +260,7 @@ export default function Notifications() {
                         { color: n.response === "I Can Donate" ? "#15803D" : "#475569" },
                       ]}
                     >
-                      {n.response === "I Can Donate" ? "Will Donate" : "Unavailable"}
+                      {n.response === "I Can Donate" ? "Will Donate" : n.response === "I Donated" ? "Donated" : "Unavailable"}
                     </Text>
                   </View>
                 )}
@@ -274,7 +286,34 @@ export default function Notifications() {
               ) : null}
 
               {/* Action Buttons for Pending or View for Responded */}
-              {isPending ? (
+              {isFulfilledOrRevoked ? (
+                <View style={{ backgroundColor: "#F0FDF4", borderWidth: 1, borderColor: "#BBF7D0", borderRadius: 8, padding: 10, marginTop: 10 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="checkmark-circle" size={16} color="#16A34A" />
+                    <Text style={{ fontSize: 12.5, fontWeight: "800", color: "#166534" }}>
+                      Blood Arranged • Request Closed
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: "#15803D", marginTop: 2, lineHeight: 15 }}>
+                    3 donors stepped forward and blood has been successfully arranged for this patient. The alert has been revoked. Thank you for your noble readiness!
+                  </Text>
+                  {req.request_number ? (
+                    <Pressable
+                      style={{ marginTop: 6 }}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/request-details",
+                          params: { id: req.request_number },
+                        })
+                      }
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: "700", color: "#166534", textDecorationLine: "underline" }}>
+                        View Request Details →
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : isPending ? (
                 <View style={styles.actionsContainer}>
                   <Text style={styles.decisionPromptText}>
                     Can you donate blood for this patient?

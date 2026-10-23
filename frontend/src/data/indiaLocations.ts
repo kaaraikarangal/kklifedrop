@@ -983,3 +983,191 @@ export function normalizeDistrictName(state: string, rawDistrict?: string): stri
   );
   return match || d;
 }
+
+/**
+ * Official Voter / Assembly Constituencies by District
+ * Focuses on Puducherry UT and neighboring Tamil Nadu districts, with custom fallback.
+ */
+export const VOTER_CONSTITUENCIES_BY_DISTRICT: Record<string, string[]> = {
+  // Karaikal (All 5 Assembly Constituencies)
+  Karaikal: [
+    "Karaikal North",
+    "Karaikal South",
+    "Thirunallar",
+    "Nedungadu (SC)",
+    "Neravy T R Pattinam",
+  ],
+  // Puducherry (All 23 Assembly Constituencies)
+  Puducherry: [
+    "Mannadipet",
+    "Thirubuvanai (SC)",
+    "Ossudu (SC)",
+    "Mangalam",
+    "Villianur",
+    "Ozhukarai",
+    "Kadirkamam",
+    "Indira Nagar",
+    "Thattanchavady",
+    "Kamaraj Nagar",
+    "Lawspet",
+    "Kalapet",
+    "Muthialpet",
+    "Raj Bhavan",
+    "Oupalam",
+    "Orleampeth",
+    "Nellithope",
+    "Mudaliarpet",
+    "Ariyankuppam",
+    "Manavely",
+    "Embalam (SC)",
+    "Nettapakkam (SC)",
+    "Bahour",
+  ],
+  Mahe: ["Mahe"],
+  Yanam: ["Yanam"],
+
+  // Neighboring Tamil Nadu Districts
+  Nagapattinam: [
+    "Nagapattinam",
+    "Kilvelur (SC)",
+    "Vedaranyam",
+  ],
+  Mayiladuthurai: [
+    "Sirkazhi (SC)",
+    "Mayiladuthurai",
+    "Poompuhar",
+  ],
+  Tiruvarur: [
+    "Thiruvarur",
+    "Mannargudi",
+    "Thiruthuraipoondi (SC)",
+    "Nannilam",
+  ],
+  Thanjavur: [
+    "Thiruvaiyaru",
+    "Thanjavur",
+    "Orathanadu",
+    "Pattukkottai",
+    "Peravurani",
+    "Papanasam",
+    "Kumbakonam",
+    "Thiruvidaimarudur (SC)",
+  ],
+  Cuddalore: [
+    "Titakudi (SC)",
+    "Vriddhachalam",
+    "Neyveli",
+    "Panruti",
+    "Cuddalore",
+    "Kurinjipadi",
+    "Bhuvanagiri",
+    "Chidambaram",
+    "Kattumannarkoil (SC)",
+  ],
+  Chennai: [
+    "Dr. Radhakrishnan Nagar",
+    "Perambur",
+    "Kolathur",
+    "Villivakkam",
+    "Thiru-Vi-Ka-Nagar (SC)",
+    "Egmore (SC)",
+    "Royapuram",
+    "Harbour",
+    "Chepauk-Thiruvallikeni",
+    "Thousand Lights",
+    "Anna Nagar",
+    "Virugambakkam",
+    "Saidapet",
+    "Thiyagarayanagar",
+    "Mylapore",
+    "Velachery",
+  ],
+};
+
+/**
+ * Get Voter / Assembly Constituencies for a district
+ */
+export function getConstituencies(district: string, state?: string): string[] {
+  if (district && VOTER_CONSTITUENCIES_BY_DISTRICT[district]) {
+    return VOTER_CONSTITUENCIES_BY_DISTRICT[district];
+  }
+  if (district && LOCAL_PLACES_BY_DISTRICT[district]) {
+    return LOCAL_PLACES_BY_DISTRICT[district];
+  }
+  return [];
+}
+
+/**
+ * Intelligently matches post office names and district to a Voter Constituency
+ */
+export function matchConstituencyFromPlaces(
+  places: string[],
+  district: string,
+  state?: string
+): string {
+  const normalizedDist = district || "";
+  const constituencies = getConstituencies(normalizedDist, state);
+
+  if (constituencies.length > 0) {
+    const placesLower = (places || []).map((p) => p.toLowerCase());
+
+    // Check specific Karaikal localities
+    if (normalizedDist === "Karaikal") {
+      const combined = placesLower.join(" ");
+      if (
+        combined.includes("thirunallar") ||
+        combined.includes("ambagarathur") ||
+        combined.includes("sellur") ||
+        combined.includes("pettai")
+      ) {
+        return "Thirunallar";
+      }
+      if (
+        combined.includes("nedungadu") ||
+        combined.includes("polagam") ||
+        combined.includes("kurumbagaram")
+      ) {
+        return "Nedungadu (SC)";
+      }
+      if (
+        combined.includes("neravy") ||
+        combined.includes("pattinam") ||
+        combined.includes("t.r.pattinam") ||
+        combined.includes("tr pattinam") ||
+        combined.includes("vizhidiyur")
+      ) {
+        return "Neravy T R Pattinam";
+      }
+      if (
+        combined.includes("kottucherry") ||
+        combined.includes("kovilpathu") ||
+        combined.includes("varichikudy") ||
+        combined.includes("thiruvettakudy")
+      ) {
+        return "Karaikal North";
+      }
+      if (
+        combined.includes("karaikal") ||
+        combined.includes("dharmapuram") ||
+        combined.includes("medu")
+      ) {
+        return "Karaikal South";
+      }
+    }
+
+    // Direct match against constituency list
+    for (const c of constituencies) {
+      const cClean = c.toLowerCase().replace(/\s*\(sc\)/g, "").trim();
+      const found = placesLower.some(
+        (pl) => pl.includes(cClean) || cClean.includes(pl)
+      );
+      if (found) return c;
+    }
+
+    // Default to the first known constituency
+    return constituencies[0];
+  }
+
+  // Fallback to first place in postal API results
+  return places && places.length > 0 ? places[0] : "";
+}

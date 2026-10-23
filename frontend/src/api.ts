@@ -382,6 +382,7 @@ function toPublicDonor(doc: any) {
   const cd = getDonorCooldown(doc);
   return {
     id: doc.id,
+    donor_number: doc.donor_number || null,
     full_name: doc.full_name,
     blood_group: doc.blood_group,
     area: doc.area,
@@ -511,6 +512,171 @@ async function sendWhatsAppOtp(mobile: string, otp: string): Promise<WaDeliveryR
     method: "failed",
     error: "WhatsApp delivery pending. Please try again.",
   };
+}
+
+/**
+ * Automatically fulfills a blood request if 3 donors have confirmed/updated for it,
+ * revoking remaining pending alerts for other donors and sending an alert that blood was arranged.
+ */
+export async function checkAndAutoFulfillRequest(requestId: string): Promise<{
+  autoFulfilled: boolean;
+  donorsCount: number;
+  requestNumber?: string;
+}> {
+  try {
+    if (!requestId) return { autoFulfilled: false, donorsCount: 0 };
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let reqQuery = supabase
+      .from("blood_requests")
+      .select("id, request_number, patient_name, blood_group, hospital_name, status, units_required");
+
+    if (UUID_RE.test(requestId)) {
+      reqQuery = reqQuery.or(`id.eq.${requestId},request_number.eq.${requestId}`);
+    } else {
+      reqQuery = reqQuery.eq("request_number", requestId);
+    }
+
+    const { data: request } = await reqQuery.maybeSingle();
+    if (!request) return { autoFulfilled: false, donorsCount: 0 };
+
+    // If already Fulfilled or Cancelled or Expired, do nothing
+    if (request.status === "Fulfilled" || request.status === "Cancelled" || request.status === "Expired") {
+      return { autoFulfilled: false, donorsCount: 0, requestNumber: request.request_number };
+    }
+
+    // 1. Gather all donors who updated/confirmed donation for this request
+    const [notifRes, donRes, respRes] = await Promise.all([
+      supabase
+        .from("notifications")
+        .select("donor_id, response")
+        .eq("request_id", request.id)
+        .in("response", ["I Donated", "Donated", "I Can Donate"]),
+      supabase
+        .from("blood_donation_records")
+        .select("donor_id")
+        .eq("blood_request_id", request.id),
+      supabase
+        .from("donor_responses")
+        .select("donor_id, response")
+        .eq("request_id", request.id)
+        .in("response", ["I Donated", "Donated", "I Can Donate"]),
+    ]);
+
+    const confirmedDonors = new Set<string>();
+    (notifRes.data || []).forEach((n) => n.donor_id && confirmedDonors.add(n.donor_id));
+    (donRes.data || []).forEach((d) => d.donor_id && confirmedDonors.add(d.donor_id));
+    (respRes.data || []).forEach((r) => r.donor_id && confirmedDonors.add(r.donor_id));
+
+    const donorsCount = confirmedDonors.size;
+
+    // Threshold: if 3 or more donors have updated/confirmed for this request
+    if (donorsCount >= 3) {
+      console.log(`[AutoFulfill] Request #${request.request_number} reached ${donorsCount} confirmed donors. Fulfilling request and revoking remaining alerts!`);
+
+      // 2. Automatically fulfill the blood request
+      await supabase
+        .from("blood_requests")
+        .update({
+          status: "Fulfilled",
+        })
+        .eq("id", request.id);
+
+      // 3. Revoke/cancel pending notifications for other donors so they are not asked to donate anymore
+      await supabase
+        .from("notifications")
+        .update({
+          status: "cancelled",
+          response: "Revoked - Request Fulfilled",
+        })
+        .eq("request_id", request.id)
+        .is("response", null);
+
+      // 4. Send fulfillment push alert to all alerted donors so they know blood has been arranged
+      try {
+        const { data: allNotifs } = await supabase
+          .from("notifications")
+          .select("donor_id")
+          .eq("request_id", request.id);
+
+        const allDonorIds = Array.from(new Set((allNotifs || []).map((x) => x.donor_id).filter(Boolean)));
+        if (allDonorIds.length > 0) {
+          const { data: donorsWithTokens } = await supabase
+            .from("donors")
+            .select("id, full_name, push_token")
+            .in("id", allDonorIds);
+
+          const pushTokens = new Set<string>();
+          for (const d of donorsWithTokens || []) {
+            const tok = (d.push_token || "").trim();
+            if (tok && (tok.startsWith("ExponentPushToken") || tok.startsWith("ExpoPushToken"))) {
+              pushTokens.add(tok);
+            }
+          }
+
+          if (pushTokens.size > 0) {
+            const pushMessages = Array.from(pushTokens).map((pushToken) => ({
+              to: pushToken,
+              sound: "default",
+              title: `✅ Blood Arranged: Req #${request.request_number}`,
+              body: `Blood has been arranged for ${request.patient_name || request.blood_group} at ${request.hospital_name || "Karaikal"}. 3 donors responded! This emergency request is now fulfilled and closed. Thank you!`,
+              channelId: "emergency-blood-alerts",
+              priority: "high",
+              badge: 0,
+              _displayInForeground: true,
+              data: {
+                request_id: request.id,
+                request_number: request.request_number,
+                type: "request_fulfilled",
+                status: "Fulfilled",
+              },
+            }));
+
+            await fetch("https://exp.host/--/api/v2/push/send", {
+              method: "POST",
+              headers: {
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(pushMessages),
+            });
+          }
+        }
+      } catch (pushErr) {
+        console.warn("[AutoFulfill] Error sending fulfillment push alerts:", pushErr);
+      }
+
+      // 5. Audit Log
+      await recordAuditLog({
+        actor: "system:auto_fulfill",
+        action: "request_auto_fulfilled_3_donors",
+        target_type: "blood_request",
+        target_id: request.id,
+        metadata: {
+          request_number: request.request_number,
+          confirmed_donors_count: donorsCount,
+          donor_ids: Array.from(confirmedDonors),
+          revoked_pending_alerts: true,
+        },
+      });
+
+      return {
+        autoFulfilled: true,
+        donorsCount,
+        requestNumber: request.request_number,
+      };
+    }
+
+    return {
+      autoFulfilled: false,
+      donorsCount,
+      requestNumber: request.request_number,
+    };
+  } catch (err) {
+    console.warn("[AutoFulfill] Error checking auto fulfill:", err);
+    return { autoFulfilled: false, donorsCount: 0 };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,7 +1273,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     if (method === "GET") {
       let q = supabase
         .from("donors")
-        .select("id, full_name, blood_group, area, place, district, state, gender, availability, donation_opt_in, last_donation_date, masked_aadhaar, created_at, status")
+        .select("id, donor_number, full_name, blood_group, area, place, district, state, gender, availability, donation_opt_in, last_donation_date, masked_aadhaar, created_at, status")
         .eq("status", "active");
 
       const bg = queryParams.get("blood_group");
@@ -1124,7 +1290,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
       const search = queryParams.get("search");
       if (search) {
-        q = q.or(`full_name.ilike.%${search}%,area.ilike.%${search}%,place.ilike.%${search}%`);
+        q = q.or(`donor_number.ilike.%${search}%,full_name.ilike.%${search}%,area.ilike.%${search}%,place.ilike.%${search}%`);
       }
 
       const limit = parseInt(queryParams.get("limit") || "100", 10);
@@ -1162,8 +1328,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         district: body.district,
         state: body.state || "Puducherry",
         pincode: body.pincode,
-        encrypted_aadhaar: aadhaarRaw ? `ENCR_${aadhaarRaw}` : null,
-        masked_aadhaar: masked,
+        encrypted_aadhaar: aadhaarRaw ? `ENCR_${aadhaarRaw}` : "NOT_PROVIDED",
+        masked_aadhaar: masked || "XXXX XXXX ****",
         availability: "Available",
         donation_opt_in: true,
         last_donation_date: formatDateToYYYYMMDD(body.last_donation_date) || null,
@@ -1306,6 +1472,96 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
   }
 
+  // 8b. Current Donor Blood Donation History (/donors/me/donations)
+  if (route === "donors/me/donations" || route === "api/donors/me/donations") {
+    const mobile = await AsyncStorage.getItem(MOBILE_KEY);
+    if (!mobile) throw new Error("Not logged in");
+
+    const { data: donorList } = await supabase
+      .from("donors")
+      .select("id, donor_number, full_name, mobile, blood_group, last_donation_date")
+      .eq("mobile", mobile)
+      .limit(1);
+
+    if (!donorList || donorList.length === 0) throw new Error("Donor profile not found");
+    const donor = donorList[0];
+
+    if (method === "GET") {
+      const orFilter = donor.donor_number
+        ? `donor_id.eq.${donor.id},donor_mobile.eq.${donor.mobile},donor_number.eq.${donor.donor_number}`
+        : `donor_id.eq.${donor.id},donor_mobile.eq.${donor.mobile}`;
+
+      const { data, error } = await supabase
+        .from("blood_donation_records")
+        .select("*")
+        .or(orFilter)
+        .order("donation_date", { ascending: false });
+
+      if (error) throw new Error(error.message);
+      return { donations: data || [], count: (data || []).length, donor_number: donor.donor_number } as unknown as T;
+    }
+
+    if (method === "POST") {
+      const donationDate = formatDateToYYYYMMDD(body.donation_date) || body.donation_date;
+      if (!donationDate) throw new Error("Please specify a valid donation date");
+
+      const insertRecord = {
+        donor_id: donor.id,
+        donor_number: donor.donor_number,
+        donor_name: donor.full_name,
+        donor_mobile: donor.mobile,
+        blood_group: donor.blood_group,
+        donation_date: donationDate,
+        units: Number(body.units || 1),
+        hospital_or_camp: body.hospital_or_camp ? String(body.hospital_or_camp).trim() : "Blood Bank / Camp",
+        notes: body.notes ? String(body.notes).trim() : null,
+        certificate_id: body.certificate_id || null,
+        certificate_image_url: body.certificate_image_url || null,
+        blood_request_id: body.blood_request_id || null,
+        recorded_by: "donor",
+      };
+
+      const { data: newRecord, error: insErr } = await supabase
+        .from("blood_donation_records")
+        .insert(insertRecord)
+        .select()
+        .single();
+
+      if (insErr) throw new Error(insErr.message);
+
+      if (body.blood_request_id) {
+        await supabase
+          .from("notifications")
+          .update({ response: "I Donated" })
+          .eq("request_id", body.blood_request_id)
+          .eq("donor_id", donor.id);
+
+        await checkAndAutoFulfillRequest(body.blood_request_id);
+      }
+
+      if (!donor.last_donation_date || donationDate >= donor.last_donation_date) {
+        await supabase
+          .from("donors")
+          .update({ last_donation_date: donationDate })
+          .eq("id", donor.id);
+      }
+
+      await recordAuditLog({
+        actor: `user:${mobile}`,
+        action: "donor_logged_donation",
+        target_type: "donor",
+        target_id: donor.id,
+        metadata: {
+          donation_date: donationDate,
+          hospital: body.hospital_or_camp,
+          donor_number: donor.donor_number,
+        },
+      });
+
+      return { ok: true, donation: newRecord } as unknown as T;
+    }
+  }
+
   // 9. Donors & Device Push Token Registration
   if (route === "donors/push-token" || route === "api/donors/push-token") {
     try {
@@ -1423,7 +1679,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     const donorId = route.replace(/^(api\/)?donors\//, "");
     const { data, error } = await supabase
       .from("donors")
-      .select("id, full_name, blood_group, area, place, district, state, gender, availability, donation_opt_in, last_donation_date, masked_aadhaar, created_at, status")
+      .select("id, donor_number, full_name, blood_group, area, place, district, state, gender, availability, donation_opt_in, last_donation_date, masked_aadhaar, created_at, status")
       .eq("id", donorId)
       .single();
     if (error || !data) throw new Error("Donor not found");
@@ -1903,8 +2159,10 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
 
     // Exclude any notifications whose blood request has been cancelled or notification cancelled
+    // (Allow notifications revoked due to fulfillment so donors see blood was arranged in history)
     const activeNotifs = (notifs || []).filter((item) => {
       const reqStatus = item.blood_requests?.status || item.request?.status;
+      if (item.response === "Revoked - Request Fulfilled") return true;
       return reqStatus !== "Cancelled" && item.status !== "cancelled" && item.response !== "Cancelled";
     });
 
@@ -1930,6 +2188,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       .update({ response, responded_at: new Date().toISOString() })
       .eq("request_id", request_id)
       .eq("donor_id", donor_id);
+
+    // If 3 donors have updated/confirmed, auto fulfill request & revoke remaining alerts
+    if (request_id) {
+      await checkAndAutoFulfillRequest(request_id);
+    }
 
     const rawMobile = await AsyncStorage.getItem(MOBILE_KEY);
     await recordAuditLog({
@@ -2091,6 +2354,151 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     return { aadhaar: null, decrypted: false } as unknown as T;
   }
 
+  // 20b. Admin Blood Donation History & Add Record for Specific Donor
+  if (route.match(/^(api\/)?admin\/donors\/[^/]+\/donations$/)) {
+    const admin = await requireAdminAuth();
+    const parts = route.split("/");
+    const donorId = parts[parts.length - 2];
+
+    const { data: donor } = await supabase
+      .from("donors")
+      .select("id, donor_number, full_name, mobile, blood_group, last_donation_date")
+      .eq("id", donorId)
+      .single();
+
+    if (!donor) throw new Error("Donor not found");
+
+    if (method === "GET") {
+      const orFilter = donor.donor_number
+        ? `donor_id.eq.${donor.id},donor_mobile.eq.${donor.mobile},donor_number.eq.${donor.donor_number}`
+        : `donor_id.eq.${donor.id},donor_mobile.eq.${donor.mobile}`;
+
+      const { data, error } = await supabase
+        .from("blood_donation_records")
+        .select("*")
+        .or(orFilter)
+        .order("donation_date", { ascending: false });
+
+      if (error) throw new Error(error.message);
+      return { donations: data || [], donor } as unknown as T;
+    }
+
+    if (method === "POST") {
+      const donationDate = formatDateToYYYYMMDD(body.donation_date) || body.donation_date;
+      if (!donationDate) throw new Error("Please specify a valid donation date");
+
+      const insertRecord = {
+        donor_id: donor.id,
+        donor_number: donor.donor_number,
+        donor_name: donor.full_name,
+        donor_mobile: donor.mobile,
+        blood_group: donor.blood_group,
+        donation_date: donationDate,
+        units: Number(body.units || 1),
+        hospital_or_camp: body.hospital_or_camp ? String(body.hospital_or_camp).trim() : "Hospital / Camp",
+        notes: body.notes ? String(body.notes).trim() : null,
+        certificate_id: body.certificate_id || null,
+        certificate_image_url: body.certificate_image_url || null,
+        recorded_by: admin.email || "admin",
+      };
+
+      const { data: newRecord, error: insErr } = await supabase
+        .from("blood_donation_records")
+        .insert(insertRecord)
+        .select()
+        .single();
+
+      if (insErr) throw new Error(insErr.message);
+
+      if (!donor.last_donation_date || donationDate >= donor.last_donation_date) {
+        await supabase
+          .from("donors")
+          .update({ last_donation_date: donationDate })
+          .eq("id", donor.id);
+      }
+
+      await recordAuditLog({
+        actor: admin.email,
+        action: "admin_record_donation",
+        target_type: "donor",
+        target_id: donor.id,
+        metadata: {
+          donor_number: donor.donor_number,
+          donor_name: donor.full_name,
+          donation_date: donationDate,
+          hospital: body.hospital_or_camp,
+        },
+      });
+
+      return { ok: true, donation: newRecord } as unknown as T;
+    }
+  }
+
+  // 20c. Admin Global Blood Donation Search & Logs (/admin/blood-donations)
+  if (route === "admin/blood-donations" || route === "api/admin/blood-donations" || route === "admin/donations/history" || route === "api/admin/donations/history") {
+    await requireAdminAuth();
+
+    if (method === "GET") {
+      let q = supabase.from("blood_donation_records").select("*");
+
+      const search = queryParams.get("search");
+      if (search && search.trim()) {
+        const s = search.trim();
+        q = q.or(`donor_number.ilike.%${s}%,donor_name.ilike.%${s}%,donor_mobile.ilike.%${s}%,hospital_or_camp.ilike.%${s}%,notes.ilike.%${s}%`);
+      }
+
+      const bg = queryParams.get("blood_group");
+      if (bg && bg !== "All") {
+        q = q.eq("blood_group", bg);
+      }
+
+      const { data, error } = await q.order("donation_date", { ascending: false }).limit(500);
+      if (error) throw new Error(error.message);
+      return { donations: data || [], count: (data || []).length } as unknown as T;
+    }
+  }
+
+  // 20d. Admin Delete Blood Donation Record
+  if (route.startsWith("admin/blood-donations/") || route.startsWith("api/admin/blood-donations/")) {
+    const admin = await requireAdminAuth();
+    const recordId = route.replace(/^(api\/)?admin\/blood-donations\//, "");
+
+    if (method === "DELETE") {
+      const { data: rec } = await supabase
+        .from("blood_donation_records")
+        .select("*")
+        .eq("id", recordId)
+        .single();
+
+      await supabase.from("blood_donation_records").delete().eq("id", recordId);
+
+      if (rec?.donor_id) {
+        const { data: latest } = await supabase
+          .from("blood_donation_records")
+          .select("donation_date")
+          .eq("donor_id", rec.donor_id)
+          .order("donation_date", { ascending: false })
+          .limit(1);
+
+        const newLatestDate = latest && latest.length > 0 ? latest[0].donation_date : null;
+        await supabase
+          .from("donors")
+          .update({ last_donation_date: newLatestDate })
+          .eq("id", rec.donor_id);
+      }
+
+      await recordAuditLog({
+        actor: admin.email,
+        action: "delete_blood_donation_record",
+        target_type: "donation",
+        target_id: recordId,
+        metadata: { deleted_record: rec },
+      });
+
+      return { ok: true } as unknown as T;
+    }
+  }
+
   // 21. Admin Update Donor Status & Rekey Aadhaar
   if (route.startsWith("admin/donors/") || route.startsWith("api/admin/donors/")) {
     const admin = await requireAdminAuth();
@@ -2138,7 +2546,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     const reqId = parts[parts.length - 2];
 
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    let bloodReqQuery = supabase.from("blood_requests").select("id, request_number, status");
+    let bloodReqQuery = supabase.from("blood_requests").select("id, request_number, status, hospital_name");
     if (UUID_RE.test(reqId)) {
       bloodReqQuery = bloodReqQuery.or(`id.eq.${reqId},request_number.eq.${reqId}`);
     } else {
@@ -2156,14 +2564,51 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     }
     await updateQuery;
 
-    // When admin cancels a blood request, remove all notifications sent to donors for this request
-    if (body.status === "Cancelled" && actualId) {
-      await supabase.from("notifications").delete().eq("request_id", actualId);
+    // When admin cancels or fulfills a blood request, revoke/clear pending notifications sent to donors
+    if (actualId) {
+      if (body.status === "Cancelled") {
+        await supabase.from("notifications").delete().eq("request_id", actualId);
+      } else if (body.status === "Fulfilled") {
+        await supabase
+          .from("notifications")
+          .update({ status: "cancelled", response: "Revoked - Request Fulfilled" })
+          .eq("request_id", actualId)
+          .is("response", null);
+      }
     }
 
-    if (body.fulfilled_by_donor_id) {
+    const donorIds: string[] = Array.isArray(body.fulfilled_by_donor_ids) && body.fulfilled_by_donor_ids.length > 0
+      ? body.fulfilled_by_donor_ids
+      : (body.fulfilled_by_donor_id ? [body.fulfilled_by_donor_id] : []);
+
+    if (donorIds.length > 0) {
       const dDate = body.donation_date || new Date().toISOString().slice(0, 10);
-      await supabase.from("donors").update({ last_donation_date: dDate }).eq("id", body.fulfilled_by_donor_id);
+      for (const dId of donorIds) {
+        await supabase.from("donors").update({ last_donation_date: dDate }).eq("id", dId);
+
+        const { data: dInfo } = await supabase
+          .from("donors")
+          .select("id, donor_number, full_name, mobile, blood_group")
+          .eq("id", dId)
+          .maybeSingle();
+
+        if (dInfo) {
+          await supabase.from("blood_donation_records").insert({
+            donor_id: dInfo.id,
+            donor_number: dInfo.donor_number,
+            donor_name: dInfo.full_name,
+            donor_mobile: dInfo.mobile,
+            blood_group: dInfo.blood_group,
+            donation_date: dDate,
+            units: 1,
+            hospital_or_camp: bloodReq?.hospital_name || "Hospital",
+            blood_request_id: actualId,
+            notes: `Fulfilled blood request #${bloodReq?.request_number || reqId}`,
+            certificate_image_url: body.certificate_image_url || null,
+            recorded_by: admin.email || "admin",
+          });
+        }
+      }
     }
 
     await recordAuditLog({

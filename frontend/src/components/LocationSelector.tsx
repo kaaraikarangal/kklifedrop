@@ -15,7 +15,8 @@ import {
   lookupPincode,
   getStates,
   getDistricts,
-  getSuggestedPlaces,
+  getConstituencies,
+  matchConstituencyFromPlaces,
   PincodeLookupResult,
 } from "@/src/location";
 
@@ -52,31 +53,25 @@ export function LocationSelector({
   const allStates = getStates();
   const availableDistricts = state ? getDistricts(state) : [];
 
-  // Combine places from postal API + local district data
-  const combinedPlaces = React.useMemo(() => {
+  // Active constituency is stored across place & area for backward compatibility
+  const selectedConstituency = place || area || "";
+
+  // Combine official Voter Constituencies with any postal localities
+  const availableConstituencies = React.useMemo(() => {
     const list: string[] = [];
-    if (postalInfo?.places?.length) {
-      list.push(...postalInfo.places);
-    }
     if (district) {
-      const local = getSuggestedPlaces(district, state);
-      local.forEach((p) => {
+      const fromDist = getConstituencies(district, state);
+      list.push(...fromDist);
+    }
+    if (postalInfo?.places?.length) {
+      postalInfo.places.forEach((p) => {
         if (!list.includes(p)) list.push(p);
       });
     }
     return list;
-  }, [postalInfo, district, state]);
+  }, [district, state, postalInfo]);
 
-  // Combine areas from postal API
-  const combinedAreas = React.useMemo(() => {
-    const list: string[] = [];
-    if (postalInfo?.places?.length) {
-      list.push(...postalInfo.places);
-    }
-    return list;
-  }, [postalInfo]);
-
-  // Handle Pincode Lookup
+  // Handle Pincode Lookup & Automatic population while typing
   async function triggerPincodeLookup(cleanPin: string) {
     if (cleanPin.length !== 6 || cleanPin === lastLookupPin.current) return;
     lastLookupPin.current = cleanPin;
@@ -88,22 +83,30 @@ export function LocationSelector({
       const res = await lookupPincode(cleanPin);
       if (res) {
         setPostalInfo(res);
-        setPostalMessage(
-          `✓ India Post: ${res.district}, ${res.state} (${res.places.length} localities)`
-        );
 
-        // Auto-fill State & District
+        // 1. Auto-fill State & District
         if (res.state) onChange("state", res.state);
         if (res.district) onChange("district", res.district);
 
-        // If place is empty and postal API returned places, pre-fill the first one if only 1, or suggest
-        if (!place && res.places.length === 1) {
-          onChange("place", res.places[0]);
+        // 2. Auto-fill primary Constituency / Place
+        const matched = matchConstituencyFromPlaces(
+          res.places,
+          res.district,
+          res.state
+        );
+        const autoPlace = matched || (res.places.length > 0 ? res.places[0] : "");
+        if (autoPlace) {
+          onChange("place", autoPlace);
+          onChange("area", autoPlace);
         }
+
+        setPostalMessage(
+          `✓ Auto-filled: ${res.district}, ${res.state}${autoPlace ? ` • ${autoPlace}` : ""}`
+        );
       } else {
         setPostalInfo(null);
         setApiFailed(true);
-        setPostalMessage("Pincode not found on India Post. Please verify or select manually.");
+        setPostalMessage("Pincode not found on India Post. Please enter details manually.");
       }
     } catch {
       setApiFailed(true);
@@ -113,7 +116,7 @@ export function LocationSelector({
     }
   }
 
-  // Trigger lookup automatically when pincode reaches 6 digits
+  // Trigger lookup automatically while typing when pincode reaches 6 digits
   useEffect(() => {
     const clean = (pincode || "").replace(/\D/g, "").slice(0, 6);
     if (clean.length === 6 && clean !== lastLookupPin.current) {
@@ -126,20 +129,35 @@ export function LocationSelector({
 
   const handleStateSelect = (selectedState: string) => {
     onChange("state", selectedState);
-    // If current district is not in the new state, reset it
     const newDistricts = getDistricts(selectedState);
     if (district && !newDistricts.includes(district)) {
-      onChange("district", newDistricts[0] || "");
+      const nextDist = newDistricts[0] || "";
+      onChange("district", nextDist);
+      const consts = getConstituencies(nextDist, selectedState);
+      if (consts.length > 0) {
+        onChange("place", consts[0]);
+        onChange("area", consts[0]);
+      }
     }
   };
 
   const handleDistrictSelect = (selectedDistrict: string) => {
     onChange("district", selectedDistrict);
+    const consts = getConstituencies(selectedDistrict, state);
+    if (consts.length > 0 && !selectedConstituency) {
+      onChange("place", consts[0]);
+      onChange("area", consts[0]);
+    }
+  };
+
+  const handleConstituencySelect = (selected: string) => {
+    onChange("place", selected);
+    onChange("area", selected);
   };
 
   return (
     <View style={styles.container}>
-      {/* 1. PINCODE (Free Postal API Integration) */}
+      {/* 1. PINCODE (Instant Free Postal API Integration with Auto-fill while typing) */}
       <View style={styles.pincodeRow}>
         <View style={{ flex: 1 }}>
           <Input
@@ -160,17 +178,26 @@ export function LocationSelector({
         <Pressable
           style={[
             styles.lookupBtn,
-            pincode.length !== 6 && styles.lookupBtnDisabled,
+            lookingUp
+              ? styles.lookupBtnActive
+              : pincode.length === 6 && !apiFailed
+              ? styles.lookupBtnSuccess
+              : styles.lookupBtnDisabled,
           ]}
           disabled={pincode.length !== 6 || lookingUp}
           onPress={() => triggerPincodeLookup(pincode)}
         >
           {lookingUp ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : pincode.length === 6 && !apiFailed ? (
+            <>
+              <Ionicons name="checkmark-circle" size={15} color="#FFFFFF" />
+              <Text style={styles.lookupBtnText}>Auto-filled</Text>
+            </>
           ) : (
             <>
-              <Ionicons name="search" size={14} color="#FFFFFF" />
-              <Text style={styles.lookupBtnText}>Auto-Fill</Text>
+              <Ionicons name="flash-outline" size={14} color="#FFFFFF" />
+              <Text style={styles.lookupBtnText}>Auto-fill</Text>
             </>
           )}
         </Pressable>
@@ -223,64 +250,45 @@ export function LocationSelector({
         error={errors.district}
       />
 
-      {/* 4. PLACE / CITY (Dropdown + Custom Entry) */}
+      {/* 4. VOTER / ASSEMBLY CONSTITUENCY (Replaces separate Area & Place fields) */}
       <SearchableSelectModal
-        testID={`${testIDPrefix}place-select`}
-        label="Place / City / Town *"
-        value={place}
-        options={combinedPlaces}
-        placeholder="Select or enter Place / City"
+        testID={`${testIDPrefix}constituency-select`}
+        label="Voter / Assembly Constituency *"
+        value={selectedConstituency}
+        options={availableConstituencies}
+        placeholder={
+          district ? "Select or enter Voter Constituency" : "Select District first"
+        }
         allowCustom={true}
-        onSelect={(val) => onChange("place", val)}
-        error={errors.place}
-        emptyNotice="No saved places. Type custom city name below:"
+        onSelect={handleConstituencySelect}
+        error={errors.place || errors.area}
+        emptyNotice="Type custom constituency or area name below:"
       />
 
-      {/* Quick locality chips for 1-tap selection if available */}
-      {combinedPlaces.length > 0 && !place ? (
+      {/* Quick constituency chips for 1-tap selection */}
+      {availableConstituencies.length > 0 && !selectedConstituency ? (
         <View style={styles.quickChipsWrap}>
-          <Text style={styles.quickChipsLabel}>Suggested for {district || "area"}:</Text>
+          <Text style={styles.quickChipsLabel}>
+            Constituencies in {district || "area"}:
+          </Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.chipsScroll}
           >
-            {combinedPlaces.slice(0, 8).map((p) => (
+            {availableConstituencies.slice(0, 8).map((c) => (
               <Pressable
-                key={p}
-                onPress={() => onChange("place", p)}
+                key={c}
+                onPress={() => handleConstituencySelect(c)}
                 style={styles.chip}
+                testID={`${testIDPrefix}constituency-chip-${c.replace(/\s+/g, "-")}`}
               >
-                <Text style={styles.chipText}>{p}</Text>
+                <Text style={styles.chipText}>{c}</Text>
               </Pressable>
             ))}
           </ScrollView>
         </View>
       ) : null}
-
-      {/* 5. AREA / LOCALITY */}
-      {combinedAreas.length > 0 ? (
-        <SearchableSelectModal
-          testID={`${testIDPrefix}area-select`}
-          label="Area / Locality / Street *"
-          value={area}
-          options={combinedAreas}
-          placeholder="Select or enter Area / Street"
-          allowCustom={true}
-          onSelect={(val) => onChange("area", val)}
-          error={errors.area}
-          emptyNotice="Type custom street or colony name below:"
-        />
-      ) : (
-        <Input
-          testID={`${testIDPrefix}area-input`}
-          label="Area / Locality / Street *"
-          value={area}
-          onChangeText={(v) => onChange("area", v)}
-          placeholder="e.g. Kennadiyar Street / Nehru Nagar"
-          error={errors.area}
-        />
-      )}
     </View>
   );
 }
@@ -297,13 +305,19 @@ const styles = StyleSheet.create({
   lookupBtn: {
     marginTop: 24,
     height: 48,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     backgroundColor: colors.brandPrimary,
     borderRadius: radius.md,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 5,
+  },
+  lookupBtnActive: {
+    backgroundColor: colors.brandPrimary,
+  },
+  lookupBtnSuccess: {
+    backgroundColor: colors.success,
   },
   lookupBtnDisabled: {
     opacity: 0.45,
@@ -311,7 +325,7 @@ const styles = StyleSheet.create({
   },
   lookupBtnText: {
     color: "#FFFFFF",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   statusBadge: {

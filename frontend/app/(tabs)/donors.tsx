@@ -36,7 +36,7 @@ export default function Donors() {
           <Ionicons name="search" size={16} color={colors.muted} />
           <TextInput
             testID="donor-search"
-            placeholder="Name, area or place"
+            placeholder="Search by ID (KKLD...), name, or area"
             placeholderTextColor={colors.muted}
             style={styles.searchInput}
             value={search}
@@ -67,9 +67,17 @@ export default function Donors() {
           <Pressable style={styles.card} onPress={() => router.push({ pathname: "/donor-contact", params: { id: d.id } })} testID={`donor-card-${d.id}`}>
             <BloodGroupBadge group={d.blood_group} size="lg" />
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={styles.name}>{d.full_name}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                <Text style={styles.name}>{d.full_name}</Text>
+                {d.donor_number ? (
+                  <View style={styles.donorIdBadge}>
+                    <Ionicons name="id-card-outline" size={11} color="#2563EB" />
+                    <Text style={styles.donorIdBadgeText}>{d.donor_number}</Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={styles.meta}>
-                <Ionicons name="location-outline" size={12} color={colors.muted} /> {d.area}, {d.place}
+                <Ionicons name="location-outline" size={12} color={colors.muted} /> {d.area && d.place && d.area !== d.place ? `${d.area}, ${d.place}` : (d.area || d.place || d.district)}
               </Text>
               <Text style={styles.meta}>District: {d.district}</Text>
               {d.last_donation_date ? <Text style={styles.lastDonation}>Last donation: {d.last_donation_date}</Text> : null}
@@ -100,6 +108,8 @@ const styles = StyleSheet.create({
   chipTextActive: { color: "#FFFFFF" },
   card: { flexDirection: "row", padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, marginTop: 10 },
   name: { fontSize: 16, fontWeight: "700", color: colors.onSurface },
+  donorIdBadge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#EFF6FF", paddingHorizontal: 7, paddingVertical: 2.5, borderRadius: radius.pill, borderWidth: 1, borderColor: "#BFDBFE" },
+  donorIdBadgeText: { color: "#1D4ED8", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   meta: { fontSize: 12, color: colors.muted, marginTop: 2 },
   lastDonation: { fontSize: 11, color: colors.muted, marginTop: 2, fontStyle: "italic" },
   cardFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },

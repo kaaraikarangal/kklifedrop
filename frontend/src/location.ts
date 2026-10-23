@@ -160,3 +160,9 @@ export function getSuggestedPlaces(district: string, state?: string): string[] {
   }
   return [];
 }
+
+export {
+  getConstituencies,
+  matchConstituencyFromPlaces,
+  VOTER_CONSTITUENCIES_BY_DISTRICT,
+} from "./data/indiaLocations";

@@ -232,3 +232,81 @@ CREATE POLICY "Allow public donation lookup"
   TO anon, authenticated
   USING (true);
 
+-- -----------------------------------------------------------------------------
+-- 7. Unique Donor ID Sequence & Trigger (Format: KKLD0001, KKLD0002, ...)
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.donors ADD COLUMN IF NOT EXISTS donor_number varchar(20) UNIQUE;
+
+CREATE SEQUENCE IF NOT EXISTS public.donor_seq START WITH 1 INCREMENT BY 1;
+
+CREATE OR REPLACE FUNCTION public.set_donor_number()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.donor_number IS NULL OR NEW.donor_number = '' THEN
+    NEW.donor_number := 'KKLD' || LPAD(nextval('public.donor_seq')::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_set_donor_number ON public.donors;
+CREATE TRIGGER trg_set_donor_number
+BEFORE INSERT ON public.donors
+FOR EACH ROW
+EXECUTE FUNCTION public.set_donor_number();
+
+-- -----------------------------------------------------------------------------
+-- 8. Blood Donation History Records Table
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.blood_donation_records (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  donor_id uuid REFERENCES public.donors(id) ON DELETE SET NULL,
+  donor_number varchar(20),
+  donor_name text NOT NULL,
+  donor_mobile varchar(20),
+  blood_group varchar(10) NOT NULL,
+  donation_date date NOT NULL,
+  units integer NOT NULL DEFAULT 1,
+  hospital_or_camp text,
+  blood_request_id uuid REFERENCES public.blood_requests(id) ON DELETE SET NULL,
+  notes text,
+  recorded_by text DEFAULT 'donor',
+  certificate_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bdr_donor_id ON public.blood_donation_records (donor_id);
+CREATE INDEX IF NOT EXISTS idx_bdr_donor_num ON public.blood_donation_records (donor_number);
+CREATE INDEX IF NOT EXISTS idx_bdr_date ON public.blood_donation_records (donation_date DESC);
+
+ALTER TABLE public.blood_donation_records ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow select on blood_donation_records" ON public.blood_donation_records;
+CREATE POLICY "Allow select on blood_donation_records"
+  ON public.blood_donation_records
+  FOR SELECT
+  TO anon, authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow insert on blood_donation_records" ON public.blood_donation_records;
+CREATE POLICY "Allow insert on blood_donation_records"
+  ON public.blood_donation_records
+  FOR INSERT
+  TO anon, authenticated
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow update on blood_donation_records" ON public.blood_donation_records;
+CREATE POLICY "Allow update on blood_donation_records"
+  ON public.blood_donation_records
+  FOR UPDATE
+  TO anon, authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS "Allow delete on blood_donation_records" ON public.blood_donation_records;
+CREATE POLICY "Allow delete on blood_donation_records"
+  ON public.blood_donation_records
+  FOR DELETE
+  TO anon, authenticated
+  USING (true);
+
+

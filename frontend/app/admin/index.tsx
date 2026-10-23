@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
   Alert,
   Platform,
+  Image,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,8 +28,13 @@ import * as Notifications from "expo-notifications";
 import { syncPushTokenWithBackend, sendTestLocalNotification, EMERGENCY_CHANNEL_ID } from "@/src/notifications";
 import { DatePickerField } from "@/src/components/DatePickerField";
 import { formatDateToDDMMYYYY, formatDateToYYYYMMDD } from "@/src/utils/dateUtils";
+import {
+  pickDonationProofImage,
+  takeDonationProofPhoto,
+  uploadDonationProofToCloudinary,
+} from "@/src/services/cloudinary";
 
-type ViewTab = "dashboard" | "donors" | "requests" | "notifications" | "subadmins" | "audit" | "donations";
+type ViewTab = "dashboard" | "donors" | "requests" | "history" | "notifications" | "subadmins" | "audit" | "donations";
 
 
 const GROUPS = ["All", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
@@ -361,6 +367,41 @@ export default function AdminHome() {
   const [donationMethodFilter, setDonationMethodFilter] = useState<"All" | "Razorpay" | "UPI" | "Anonymous">("All");
   const [viewReceiptModal, setViewReceiptModal] = useState<{ open: boolean; donation?: any }>({ open: false });
 
+  // Blood Donation Logs & Records State
+  const [bloodDonations, setBloodDonations] = useState<any[]>([]);
+  const [bloodDonationSearch, setBloodDonationSearch] = useState("");
+  const [bloodDonationBgFilter, setBloodDonationBgFilter] = useState("All");
+  const [donorHistoryModal, setDonorHistoryModal] = useState<{
+    open: boolean;
+    donor?: any;
+    records: any[];
+    loading: boolean;
+  }>({
+    open: false,
+    records: [],
+    loading: false,
+  });
+  const [addRecordModal, setAddRecordModal] = useState<{
+    open: boolean;
+    donor?: any;
+    donorId?: string;
+    donationDate: string;
+    hospital: string;
+    units: string;
+    notes: string;
+    submitting: boolean;
+  }>({
+    open: false,
+    donationDate: formatDateToDDMMYYYY(new Date()),
+    hospital: "",
+    units: "1",
+    notes: "",
+    submitting: false,
+  });
+
+  const [addRecordProofImage, setAddRecordProofImage] = useState<{ uri: string; base64?: string } | null>(null);
+  const [adminPreviewImage, setAdminPreviewImage] = useState<string | null>(null);
+
   // Super Admin & Sub-Admins State
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [currentAdminUser, setCurrentAdminUser] = useState<any>(null);
@@ -417,12 +458,19 @@ export default function AdminHome() {
   const [fulfillModal, setFulfillModal] = useState<{
     open: boolean;
     request?: any;
-    donorId?: string;
+    donorType?: "unregistered" | "registered";
+    donorIds: string[];
     donationDate: string;
     submitting?: boolean;
+    search?: string;
+    filterMatchingOnly?: boolean;
   }>({
     open: false,
+    donorType: "unregistered",
+    donorIds: [],
     donationDate: new Date().toISOString().slice(0, 10),
+    search: "",
+    filterMatchingOnly: true,
   });
 
   async function loadAll() {
@@ -435,7 +483,7 @@ export default function AdminHome() {
         return;
       }
 
-      const [s, d, r, n, a, me, sa, don] = await Promise.all([
+      const [s, d, r, n, a, me, sa, don, bdon] = await Promise.all([
         api("/admin/stats", { auth: true }),
         api("/admin/donors", { auth: true }),
         api("/blood-requests", { auth: true }),
@@ -444,6 +492,7 @@ export default function AdminHome() {
         api("/admin/me", { auth: true }).catch(() => ({ admin: null })),
         api("/admin/sub-admins", { auth: true }).catch(() => ({ admins: [] })),
         api("/admin/donations", { auth: true }).catch(() => ({ donations: [] })),
+        api("/admin/blood-donations", { auth: true }).catch(() => ({ donations: [] })),
       ]);
       setStats(s);
       setDonors((d as any).donors || []);
@@ -451,6 +500,7 @@ export default function AdminHome() {
       setNotifs((n as any).groups || (n as any).notifications || []);
       setAuditLogs((a as any).logs || []);
       setDonations((don as any).donations || []);
+      setBloodDonations((bdon as any).donations || []);
 
       const adminMe = (me as any)?.admin;
       setCurrentAdminUser(adminMe);
@@ -788,9 +838,42 @@ export default function AdminHome() {
     setFulfillModal({
       open: true,
       request: req,
-      donorId: undefined,
+      donorType: "unregistered",
+      donorIds: [],
       donationDate: new Date().toISOString().slice(0, 10),
       submitting: false,
+      search: "",
+      filterMatchingOnly: true,
+    });
+  }
+
+  function toggleFulfillDonor(donorId: string) {
+    setFulfillModal((prev) => {
+      const exists = prev.donorIds.includes(donorId);
+      const nextIds = exists
+        ? prev.donorIds.filter((id) => id !== donorId)
+        : [...prev.donorIds, donorId];
+      return { ...prev, donorIds: nextIds };
+    });
+  }
+
+  function selectAllFilteredFulfillDonors(allFilteredIds: string[]) {
+    setFulfillModal((prev) => {
+      const allSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => prev.donorIds.includes(id));
+      if (allSelected) {
+        // Deselect only the filtered ones
+        return {
+          ...prev,
+          donorIds: prev.donorIds.filter((id) => !allFilteredIds.includes(id)),
+        };
+      } else {
+        // Merge with existing
+        const merged = Array.from(new Set([...prev.donorIds, ...allFilteredIds]));
+        return {
+          ...prev,
+          donorIds: merged,
+        };
+      }
     });
   }
 
@@ -798,23 +881,30 @@ export default function AdminHome() {
     if (!fulfillModal.request) return;
     setFulfillModal((prev) => ({ ...prev, submitting: true }));
     try {
+      const fulfillingDonorIds = fulfillModal.donorType === "registered" ? fulfillModal.donorIds : [];
       await api(`/admin/blood-requests/${fulfillModal.request.id}/status`, {
         auth: true,
         method: "PATCH",
         body: {
           status: "Fulfilled",
-          fulfilled_by_donor_id: fulfillModal.donorId || undefined,
-          donation_date: fulfillModal.donorId ? fulfillModal.donationDate : undefined,
+          fulfilled_by_donor_ids: fulfillingDonorIds.length > 0 ? fulfillingDonorIds : undefined,
+          fulfilled_by_donor_id: fulfillingDonorIds.length === 1 ? fulfillingDonorIds[0] : undefined,
+          donation_date: fulfillingDonorIds.length > 0 ? fulfillModal.donationDate : undefined,
         },
       });
       toast(
         "success",
         "Request Fulfilled",
-        fulfillModal.donorId
-          ? "Blood request fulfilled and fulfilling donor is entered into medical rest cooldown (90 days for males / 120 days for females)."
+        fulfillingDonorIds.length > 0
+          ? `Blood request fulfilled with ${fulfillingDonorIds.length} donor(s) placed into safety rest cooldown.`
           : "Request marked as fulfilled."
       );
-      setFulfillModal({ open: false, donationDate: new Date().toISOString().slice(0, 10) });
+      setFulfillModal({
+        open: false,
+        donorType: "unregistered",
+        donorIds: [],
+        donationDate: new Date().toISOString().slice(0, 10),
+      });
       loadAll();
     } catch (e: any) {
       toast("error", "Failed to fulfill request", e.message);
@@ -822,11 +912,42 @@ export default function AdminHome() {
     }
   }
 
+  const filteredFulfillDonors = useMemo(() => {
+    let list = donors;
+    if (fulfillModal.filterMatchingOnly && fulfillModal.request?.blood_group) {
+      list = list.filter((d) => d.blood_group === fulfillModal.request.blood_group);
+    }
+    const q = (fulfillModal.search || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (d) =>
+          d.full_name?.toLowerCase().includes(q) ||
+          d.donor_number?.toLowerCase().includes(q) ||
+          d.mobile?.toLowerCase().includes(q) ||
+          d.area?.toLowerCase().includes(q) ||
+          d.district?.toLowerCase().includes(q) ||
+          d.place?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [donors, fulfillModal.filterMatchingOnly, fulfillModal.request?.blood_group, fulfillModal.search]);
+
+  const matchingDonorsCount = useMemo(() => {
+    if (!fulfillModal.request?.blood_group) return 0;
+    return donors.filter((d) => d.blood_group === fulfillModal.request.blood_group).length;
+  }, [donors, fulfillModal.request?.blood_group]);
+
+  const selectedFulfillDonorsList = useMemo(() => {
+    if (!fulfillModal.donorIds || fulfillModal.donorIds.length === 0) return [];
+    return donors.filter((d) => fulfillModal.donorIds.includes(d.id));
+  }, [donors, fulfillModal.donorIds]);
+
   // Filtered Donors (Ineligible donors automatically sent to the bottom)
   const filteredDonors = useMemo(() => {
     const list = donors.filter((d) => {
       const matchSearch =
         !donorSearch.trim() ||
+        d.donor_number?.toLowerCase().includes(donorSearch.toLowerCase()) ||
         d.full_name?.toLowerCase().includes(donorSearch.toLowerCase()) ||
         d.mobile?.includes(donorSearch) ||
         d.area?.toLowerCase().includes(donorSearch.toLowerCase()) ||
@@ -970,6 +1091,13 @@ export default function AdminHome() {
       badge: emergencyRequests.length > 0 ? emergencyRequests.length : undefined,
     },
     {
+      id: "history" as ViewTab,
+      label: `Donation Logs (${bloodDonations.length})`,
+      shortLabel: "Logs",
+      icon: "calendar-outline",
+      activeIcon: "calendar",
+    },
+    {
       id: "donations" as ViewTab,
       label: `Donations (${donations.length})`,
       shortLabel: "Donations",
@@ -1001,7 +1129,98 @@ export default function AdminHome() {
       icon: "shield-outline",
       activeIcon: "shield",
     },
-  ], [donors.length, requests.length, emergencyRequests.length, donations.length, notifs.length, subAdmins.length, auditLogs.length, isSuperAdmin]);
+  ], [donors.length, requests.length, bloodDonations.length, emergencyRequests.length, donations.length, notifs.length, subAdmins.length, auditLogs.length, isSuperAdmin]);
+
+  // Filtered Blood Donation Records (Search by donor ID, name, mobile, hospital)
+  const filteredBloodDonations = useMemo(() => {
+    return bloodDonations.filter((b) => {
+      const q = (bloodDonationSearch || "").trim().toLowerCase();
+      const matchSearch =
+        !q ||
+        b.donor_number?.toLowerCase().includes(q) ||
+        b.donor_name?.toLowerCase().includes(q) ||
+        b.donor_mobile?.includes(q) ||
+        b.hospital_or_camp?.toLowerCase().includes(q) ||
+        b.notes?.toLowerCase().includes(q);
+
+      const matchBg = bloodDonationBgFilter === "All" || b.blood_group === bloodDonationBgFilter;
+      return matchSearch && matchBg;
+    });
+  }, [bloodDonations, bloodDonationSearch, bloodDonationBgFilter]);
+
+  async function openDonorHistory(donor: any) {
+    setDonorHistoryModal({ open: true, donor, records: [], loading: true });
+    try {
+      const res: any = await api(`/admin/donors/${donor.id}/donations`, { auth: true });
+      setDonorHistoryModal({ open: true, donor, records: res.donations || [], loading: false });
+    } catch (e: any) {
+      toast("error", "Failed to load history", e.message);
+      setDonorHistoryModal({ open: true, donor, records: [], loading: false });
+    }
+  }
+
+  async function handleAddDonationForDonor() {
+    if (!addRecordModal.donorId) return;
+    if (!addRecordModal.donationDate) {
+      toast("error", "Date Required", "Please select a donation date");
+      return;
+    }
+    setAddRecordModal((prev) => ({ ...prev, submitting: true }));
+    try {
+      let uploadedCertificateUrl: string | null = null;
+      if (addRecordProofImage) {
+        uploadedCertificateUrl = await uploadDonationProofToCloudinary(addRecordProofImage);
+      }
+
+      await api(`/admin/donors/${addRecordModal.donorId}/donations`, {
+        auth: true,
+        method: "POST",
+        body: {
+          donation_date: addRecordModal.donationDate,
+          hospital_or_camp: addRecordModal.hospital.trim() || "General Hospital, Karaikal",
+          units: parseInt(addRecordModal.units, 10) || 1,
+          notes: addRecordModal.notes.trim() || undefined,
+          certificate_image_url: uploadedCertificateUrl,
+        },
+      });
+      toast("success", "Blood Donation Recorded", "Donor entered into health rest period and timeline updated.");
+      setAddRecordProofImage(null);
+      setAddRecordModal((prev) => ({ ...prev, open: false, submitting: false }));
+      loadAll();
+      if (donorHistoryModal.open && donorHistoryModal.donor?.id === addRecordModal.donorId) {
+        openDonorHistory(donorHistoryModal.donor);
+      }
+    } catch (e: any) {
+      toast("error", "Failed to record", e.message);
+      setAddRecordModal((prev) => ({ ...prev, submitting: false }));
+    }
+  }
+
+  async function handleDeleteBloodDonationRecord(recordId: string, donorName?: string) {
+    const doDelete = async () => {
+      try {
+        await api(`/admin/blood-donations/${recordId}`, { auth: true, method: "DELETE" });
+        toast("info", "Record Removed", "Blood donation record was deleted");
+        loadAll();
+        if (donorHistoryModal.open && donorHistoryModal.donor) {
+          openDonorHistory(donorHistoryModal.donor);
+        }
+      } catch (e: any) {
+        toast("error", "Delete Failed", e.message);
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm(`Delete blood donation record for ${donorName || "donor"}?`)) {
+        doDelete();
+      }
+      return;
+    }
+    Alert.alert("Delete Donation Record", `Delete blood donation record for ${donorName || "donor"}?`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: doDelete },
+    ]);
+  }
 
   const filteredDonations = useMemo(() => {
     return donations.filter((d) => {
@@ -1472,7 +1691,15 @@ export default function AdminHome() {
                       <View style={styles.donorHeaderLeft}>
                         <BloodGroupBadge group={d.blood_group} size="md" />
                         <View style={{ marginLeft: 12, flex: 1 }}>
-                          <Text style={styles.donorName} numberOfLines={1}>{d.full_name}</Text>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <Text style={styles.donorName} numberOfLines={1}>{d.full_name}</Text>
+                            {d.donor_number ? (
+                              <View style={styles.donorIdPill}>
+                                <Ionicons name="id-card-outline" size={10} color="#2563EB" />
+                                <Text style={styles.donorIdPillText}>{d.donor_number}</Text>
+                              </View>
+                            ) : null}
+                          </View>
                           <View style={styles.donorLocationRow}>
                             <Ionicons name="location-sharp" size={12} color={colors.brandBlue} />
                             <Text style={styles.donorLocationText} numberOfLines={1}>
@@ -1523,16 +1750,29 @@ export default function AdminHome() {
                     </View>
                   </View>
 
-                  <Pressable
-                    testID={`record-donation-${d.id}`}
-                    style={[styles.btnRecordDonationCompact, d.in_cooldown && styles.btnRecordDonationCompactActive]}
-                    onPress={() => openDonationModal(d)}
-                  >
-                    <Ionicons name="calendar-outline" size={13} color={d.in_cooldown ? "#92400E" : colors.brandPrimary} />
-                    <Text style={[styles.btnRecordDonationText, { color: d.in_cooldown ? "#92400E" : colors.brandPrimary }]}>
-                      {d.in_cooldown ? "Edit Rest" : "Mark Donated"}
-                    </Text>
-                  </Pressable>
+                  <View style={{ flexDirection: "row", gap: 6 }}>
+                    <Pressable
+                      testID={`history-donation-${d.id}`}
+                      style={[styles.btnRecordDonationCompact, { backgroundColor: "#EFF6FF", borderColor: "#BFDBFE" }]}
+                      onPress={() => openDonorHistory(d)}
+                    >
+                      <Ionicons name="time-outline" size={13} color="#1D4ED8" />
+                      <Text style={[styles.btnRecordDonationText, { color: "#1D4ED8" }]}>
+                        History
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      testID={`record-donation-${d.id}`}
+                      style={[styles.btnRecordDonationCompact, d.in_cooldown && styles.btnRecordDonationCompactActive]}
+                      onPress={() => openDonationModal(d)}
+                    >
+                      <Ionicons name="calendar-outline" size={13} color={d.in_cooldown ? "#92400E" : colors.brandPrimary} />
+                      <Text style={[styles.btnRecordDonationText, { color: d.in_cooldown ? "#92400E" : colors.brandPrimary }]}>
+                        {d.in_cooldown ? "Edit Rest" : "Mark Donated"}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
 
                 {/* 2-COLUMN IDENTITY & CONTACT CARDS */}
@@ -1553,6 +1793,11 @@ export default function AdminHome() {
                     </Text>
                   </Pressable>
 
+                  {/*
+                  // =========================================================================
+                  // [AADHAAR_FEATURE] GOVT AADHAAR Donor Card Info Tile
+                  // Uncomment below block to re-enable Aadhaar display upon release
+                  // =========================================================================
                   <View style={styles.infoTileCard}>
                     <View style={styles.infoTileHeader}>
                       <Text style={styles.infoTileLabel}>GOVT AADHAAR</Text>
@@ -1562,6 +1807,7 @@ export default function AdminHome() {
                       {d.masked_aadhaar || "XXXX XXXX XXXX"}
                     </Text>
                   </View>
+                  */}
                 </View>
 
                 {/* DEMOGRAPHICS & PROFILE METADATA ROW */}
@@ -1586,6 +1832,11 @@ export default function AdminHome() {
                 <View style={styles.donorActionBar}>
                   {/* Primary Actions: Equal 50/50 split */}
                   <View style={styles.donorActionMainRow}>
+                    {/*
+                    // =========================================================================
+                    // [AADHAAR_FEATURE] Reveal Aadhaar Admin Action Button
+                    // Uncomment below block to re-enable Reveal Aadhaar action upon release
+                    // =========================================================================
                     <Pressable
                       testID={`reveal-aadhaar-${d.id}`}
                       style={styles.actionBtnReveal}
@@ -1594,6 +1845,7 @@ export default function AdminHome() {
                       <Ionicons name="eye" size={13} color="#FFFFFF" />
                       <Text style={styles.actionBtnRevealText}>Reveal Aadhaar</Text>
                     </Pressable>
+                    */}
 
                     <Pressable
                       style={[
@@ -1852,6 +2104,177 @@ export default function AdminHome() {
                     </View>
                   ) : null}
                 </View>
+              </View>
+            )}
+          />
+        </View>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: BLOOD DONATION LOGS & HISTORY */}
+      {/* ========================================================================= */}
+      {view === "history" && (
+        <View style={{ flex: 1 }}>
+          <View style={[styles.filterSection, { paddingHorizontal: isMobile ? 12 : spacing.lg }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <View>
+                <Text style={styles.cardBoxTitle}>Blood Donation Logs</Text>
+                <Text style={styles.cardBoxSub}>Search and verify historical blood donation events across Karaikal</Text>
+              </View>
+
+              <Pressable
+                testID="admin-add-donation-log-btn"
+                style={styles.btnRecordDonationHeader}
+                onPress={() => {
+                  setAddRecordModal({
+                    open: true,
+                    donor: undefined,
+                    donorId: undefined,
+                    donationDate: formatDateToDDMMYYYY(new Date()),
+                    hospital: "",
+                    units: "1",
+                    notes: "",
+                    submitting: false,
+                  });
+                }}
+              >
+                <Ionicons name="add-circle" size={15} color="#FFFFFF" />
+                <Text style={styles.btnRecordDonationHeaderText}>+ Record Donation</Text>
+              </Pressable>
+            </View>
+
+            {/* Search Bar */}
+            <View style={styles.searchBar}>
+              <Ionicons name="search" size={16} color="#64748B" />
+              <TextInput
+                testID="admin-blood-donation-search"
+                style={styles.searchInput}
+                placeholder="Search by Donor ID (KKLD...), donor name, mobile, hospital or camp..."
+                placeholderTextColor="#94A3B8"
+                value={bloodDonationSearch}
+                onChangeText={setBloodDonationSearch}
+              />
+              {bloodDonationSearch ? (
+                <Pressable onPress={() => setBloodDonationSearch("")} hitSlop={8}>
+                  <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                </Pressable>
+              ) : null}
+            </View>
+
+            {/* Blood Group Filter Chips */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipRow}>
+              {GROUPS.map((g) => (
+                <Pressable
+                  key={g}
+                  style={[styles.filterChip, bloodDonationBgFilter === g && styles.filterChipActive]}
+                  onPress={() => setBloodDonationBgFilter(g)}
+                >
+                  <Text style={[styles.filterChipText, bloodDonationBgFilter === g && styles.filterChipTextActive]}>
+                    {g === "All" ? "All Groups" : g}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <FlatList
+            data={filteredBloodDonations}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={[styles.contentWrap, { paddingHorizontal: isMobile ? 12 : spacing.lg, paddingBottom: insets.bottom + (isMobile ? 80 : 32) }]}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Ionicons name="water-outline" size={42} color="#94A3B8" />
+                <Text style={styles.emptyTitle}>No Blood Donation Records Found</Text>
+                <Text style={styles.emptyDesc}>
+                  {bloodDonationSearch || bloodDonationBgFilter !== "All"
+                    ? "Try adjusting your search query or blood group filter."
+                    : "No blood donations logged yet. Use '+ Record Donation' to add one."}
+                </Text>
+              </View>
+            }
+            renderItem={({ item: b }) => (
+              <View style={styles.donationLogCard} key={b.id} testID={`donation-log-${b.id}`}>
+                <View style={styles.donationLogHead}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                    <BloodGroupBadge group={b.blood_group} size="md" />
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <Text style={styles.donationLogDonorName}>{b.donor_name}</Text>
+                        {b.donor_number ? (
+                          <View style={styles.donorIdPill}>
+                            <Ionicons name="id-card-outline" size={10} color="#2563EB" />
+                            <Text style={styles.donorIdPillText}>{b.donor_number}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 }}>
+                        {b.donor_mobile ? (
+                          <Pressable onPress={() => Linking.openURL(`tel:+91${b.donor_mobile}`)} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                            <Ionicons name="call" size={11} color={colors.brandBlue} />
+                            <Text style={styles.donationLogMobileText}>+91 {b.donor_mobile}</Text>
+                          </Pressable>
+                        ) : null}
+                        <View style={[styles.timelineBadge, b.recorded_by === "donor" ? styles.timelineBadgeSelf : styles.timelineBadgeAdmin]}>
+                          <Text style={styles.timelineBadgeText}>
+                            {b.recorded_by === "donor" ? "Self-Reported" : "Hospital Verified"}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+
+                  <Pressable
+                    testID={`delete-donation-record-${b.id}`}
+                    onPress={() => handleDeleteBloodDonationRecord(b.id, b.donor_name)}
+                    style={styles.btnDeleteDonationLog}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                  </Pressable>
+                </View>
+
+                {/* Donation Event Details Strip */}
+                <View style={styles.donationLogDetailsRow}>
+                  <View style={styles.donationLogDetailItem}>
+                    <Ionicons name="calendar-outline" size={13} color={colors.brandPrimary} />
+                    <Text style={styles.donationLogDateText}>
+                      {formatDateToDDMMYYYY(b.donation_date) || b.donation_date}
+                    </Text>
+                  </View>
+                  <View style={styles.donationLogDetailItem}>
+                    <Ionicons name="business-outline" size={13} color="#475569" />
+                    <Text style={styles.donationLogHospitalText} numberOfLines={1}>
+                      {b.hospital_or_camp || "General Hospital, Karaikal"}
+                    </Text>
+                  </View>
+                  <View style={styles.donationLogDetailItem}>
+                    <Ionicons name="water-outline" size={13} color={colors.brandPrimary} />
+                    <Text style={styles.donationLogUnitsText}>{b.units || 1} Unit</Text>
+                  </View>
+                </View>
+
+                {b.notes ? (
+                  <View style={styles.donationLogNotesBox}>
+                    <Text style={styles.donationLogNotesText}>Note: {b.notes}</Text>
+                  </View>
+                ) : null}
+
+                {b.certificate_image_url ? (
+                  <Pressable
+                    style={styles.adminProofRow}
+                    onPress={() => setAdminPreviewImage(b.certificate_image_url)}
+                  >
+                    <Image source={{ uri: b.certificate_image_url }} style={styles.adminProofThumb} resizeMode="cover" />
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                        <Ionicons name="ribbon" size={13} color="#059669" />
+                        <Text style={styles.adminProofTitle}>Donation Proof / Certificate</Text>
+                      </View>
+                      <Text style={styles.adminProofSub}>Stored Securely in Cloud • Tap to inspect full resolution</Text>
+                    </View>
+                    <Ionicons name="expand-outline" size={16} color={colors.brandBlue} />
+                  </Pressable>
+                ) : null}
               </View>
             )}
           />
@@ -2234,7 +2657,8 @@ export default function AdminHome() {
                     { id: "Requests", label: "Blood Requests" },
                     { id: "Registrations", label: "Registrations" },
                     { id: "Broadcasts", label: "Broadcasts" },
-                    { id: "Aadhaar", label: "Aadhaar" },
+                    // [AADHAAR_FEATURE] Uncomment upon release:
+                    // { id: "Aadhaar", label: "Aadhaar" },
                   ].map((f) => (
                     <Pressable
                       key={f.id}
@@ -2807,9 +3231,11 @@ export default function AdminHome() {
         />
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL: AADHAAR DECRYPT REVEAL */}
-      {/* ========================================================================= */}
+      {/*
+      // =========================================================================
+      // [AADHAAR_FEATURE] MODAL: AADHAAR DECRYPT REVEAL
+      // Uncomment below modal block to re-enable Aadhaar reveal & rekey in Admin
+      // =========================================================================
       <Modal visible={aadhaarModal.open} transparent animationType="fade" onRequestClose={() => setAadhaarModal({ open: false })}>
         <View style={styles.modalBg}>
           <View style={styles.modal} testID="aadhaar-modal">
@@ -2918,6 +3344,7 @@ export default function AdminHome() {
           </View>
         </View>
       </Modal>
+      */}
 
       {/* ========================================================================= */}
       {/* MODAL: SMART MATCH & NOTIFY */}
@@ -3281,86 +3708,765 @@ export default function AdminHome() {
       </Modal>
 
       {/* ========================================================================= */}
-      {/* MODAL: FULFILL BLOOD REQUEST (LINK DONOR & COOLDOWN) */}
+      {/* MODAL: DONOR DONATION HISTORY TIMELINE */}
       {/* ========================================================================= */}
-      <Modal visible={fulfillModal.open} transparent animationType="fade" onRequestClose={() => setFulfillModal({ open: false, donationDate: new Date().toISOString().slice(0, 10) })}>
+      <Modal
+        visible={donorHistoryModal.open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDonorHistoryModal({ open: false, records: [], loading: false })}
+      >
         <View style={styles.modalBg}>
-          <View style={styles.modal} testID="fulfill-modal">
-            <View style={[styles.modalShieldIcon, { backgroundColor: "#ECFDF5" }]}>
-              <Ionicons name="checkmark-done-circle" size={32} color={colors.brandGreen} />
+          <View style={[styles.modalCardLarge, { maxHeight: "85%" }]} testID="donor-history-modal">
+            {/* Modal Header */}
+            <View style={styles.modalCardHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                <View style={[styles.modalIconCircle, { backgroundColor: "#EFF6FF" }]}>
+                  <Ionicons name="time" size={20} color="#2563EB" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <Text style={styles.modalTitleText}>{donorHistoryModal.donor?.full_name}</Text>
+                    {donorHistoryModal.donor?.donor_number ? (
+                      <View style={styles.donorIdPill}>
+                        <Ionicons name="id-card-outline" size={10} color="#2563EB" />
+                        <Text style={styles.donorIdPillText}>{donorHistoryModal.donor?.donor_number}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.modalSubText}>
+                    Group: <Text style={{ fontWeight: "700" }}>{donorHistoryModal.donor?.blood_group}</Text> • +91 {donorHistoryModal.donor?.mobile}
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => setDonorHistoryModal({ open: false, records: [], loading: false })}
+                hitSlop={8}
+              >
+                <Ionicons name="close" size={22} color="#64748B" />
+              </Pressable>
             </View>
 
-            <Text style={styles.modalTitle}>Fulfill Blood Request</Text>
-            <Text style={styles.modalSubtitle}>
-              {fulfillModal.request?.patient_name} • {fulfillModal.request?.blood_group} ({fulfillModal.request?.units_required} Unit)
-            </Text>
-
-            <Text style={styles.fulfillSelectLabel}>Select Donor Who Fulfilled (Optional):</Text>
-            <ScrollView style={{ maxHeight: 180, width: "100%", marginVertical: 8 }}>
+            {/* Quick Summary Strip */}
+            <View style={styles.historyDonorSummaryStrip}>
+              <View style={styles.historySummaryCol}>
+                <Text style={styles.historySummaryNum}>{donorHistoryModal.records?.length || 0}</Text>
+                <Text style={styles.historySummaryLbl}>Total Donations</Text>
+              </View>
+              <View style={styles.historySummaryDivider} />
+              <View style={styles.historySummaryCol}>
+                <Text style={[styles.historySummaryNum, { color: donorHistoryModal.donor?.in_cooldown ? "#D97706" : "#059669" }]}>
+                  {donorHistoryModal.donor?.in_cooldown ? `${donorHistoryModal.donor.cooldown_days_left}d Left` : "Eligible"}
+                </Text>
+                <Text style={styles.historySummaryLbl}>Rest Status</Text>
+              </View>
+              <View style={styles.historySummaryDivider} />
               <Pressable
-                style={[styles.fulfillDonorRow, !fulfillModal.donorId && styles.fulfillDonorRowSelected]}
-                onPress={() => setFulfillModal((prev) => ({ ...prev, donorId: undefined }))}
+                style={styles.btnAddRecordFromHistory}
+                onPress={() => {
+                  setAddRecordModal({
+                    open: true,
+                    donor: donorHistoryModal.donor,
+                    donorId: donorHistoryModal.donor?.id,
+                    donationDate: formatDateToDDMMYYYY(new Date()),
+                    hospital: "",
+                    units: "1",
+                    notes: "",
+                    submitting: false,
+                  });
+                }}
               >
-                <View style={[styles.radioCircle, !fulfillModal.donorId && styles.radioCircleActive]} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.fulfillDonorName}>External / Walk-in / Unlisted Donor</Text>
-                  <Text style={styles.fulfillDonorSub}>Does not affect registered donor rest period</Text>
-                </View>
+                <Ionicons name="add-circle" size={14} color="#FFFFFF" />
+                <Text style={styles.btnAddRecordFromHistoryText}>+ Add Donation</Text>
               </Pressable>
+            </View>
 
-              {donors
-                .filter((d) => d.blood_group === fulfillModal.request?.blood_group)
-                .map((d) => {
-                  const isSelected = fulfillModal.donorId === d.id;
-                  return (
-                    <Pressable
-                      key={d.id}
-                      style={[styles.fulfillDonorRow, isSelected && styles.fulfillDonorRowSelected]}
-                      onPress={() => setFulfillModal((prev) => ({ ...prev, donorId: d.id }))}
-                    >
-                      <View style={[styles.radioCircle, isSelected && styles.radioCircleActive]} />
-                      <BloodGroupBadge group={d.blood_group} size="sm" />
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.fulfillDonorName}>{d.full_name}</Text>
-                        <Text style={styles.fulfillDonorSub}>
-                          {d.area}, {d.district} • Mobile: +91 {d.mobile}
-                        </Text>
-                      </View>
-                    </Pressable>
-                  );
-                })}
-            </ScrollView>
-
-            {fulfillModal.donorId ? (
-              <View style={styles.fulfillCooldownNotice}>
-                <Ionicons name="shield-checkmark" size={15} color="#D97706" />
-                <Text style={styles.fulfillCooldownText}>
-                  Selected donor will automatically enter a medical rest cooldown (90 days for males / 120 days for females) starting today. They will not be notified during this period.
+            {/* Records List */}
+            {donorHistoryModal.loading ? (
+              <View style={{ padding: 40, alignItems: "center" }}>
+                <ActivityIndicator size="large" color={colors.brandPrimary} />
+                <Text style={{ marginTop: 10, color: colors.muted, fontSize: 13 }}>Loading donation logs...</Text>
+              </View>
+            ) : donorHistoryModal.records?.length === 0 ? (
+              <View style={{ paddingVertical: 40, alignItems: "center" }}>
+                <Ionicons name="water-outline" size={38} color="#94A3B8" />
+                <Text style={{ fontSize: 15, fontWeight: "700", color: colors.onSurface, marginTop: 8 }}>
+                  No blood donations logged yet
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.muted, marginTop: 4, textAlign: "center", paddingHorizontal: 20 }}>
+                  Tap "+ Add Donation" above to record a completed blood donation for this donor.
                 </Text>
               </View>
-            ) : null}
+            ) : (
+              <ScrollView style={{ maxHeight: 360, marginVertical: 8 }} showsVerticalScrollIndicator={false}>
+                {donorHistoryModal.records.map((r, idx) => (
+                  <View key={r.id || idx} style={styles.donorHistoryItem}>
+                    <View style={styles.donorHistoryItemLeft}>
+                      <View style={styles.donorHistoryDot}>
+                        <Ionicons name="water" size={10} color="#FFFFFF" />
+                      </View>
+                      <View style={{ marginLeft: 10, flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                          <Text style={styles.donorHistoryDateText}>
+                            {formatDateToDDMMYYYY(r.donation_date) || r.donation_date}
+                          </Text>
+                          <View style={[styles.timelineBadge, r.recorded_by === "donor" ? styles.timelineBadgeSelf : styles.timelineBadgeAdmin]}>
+                            <Text style={styles.timelineBadgeText}>
+                              {r.recorded_by === "donor" ? "Self-Reported" : "Hospital Verified"}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.donorHistoryHospitalText}>
+                          {r.hospital_or_camp || "General Hospital, Karaikal"} • {r.units || 1} Unit
+                        </Text>
+                        {r.notes ? (
+                          <Text style={styles.donorHistoryNotesText}>Note: {r.notes}</Text>
+                        ) : null}
 
-            <Pressable
-              style={[styles.rekeySubmitBtn, { backgroundColor: colors.brandGreen, marginTop: 12 }]}
-              onPress={submitFulfill}
-              disabled={fulfillModal.submitting}
-            >
-              {fulfillModal.submitting ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark-done" size={16} color="#FFFFFF" />
-                  <Text style={styles.rekeySubmitText}>Confirm & Complete Fulfillment</Text>
-                </>
-              )}
-            </Pressable>
+                        {r.certificate_image_url ? (
+                          <Pressable
+                            style={styles.adminProofRowSmall}
+                            onPress={() => setAdminPreviewImage(r.certificate_image_url)}
+                          >
+                            <Image source={{ uri: r.certificate_image_url }} style={styles.adminProofThumbSmall} resizeMode="cover" />
+                            <Text style={styles.adminProofTitleSmall}>View Certificate / Proof ↗</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    <Pressable
+                      style={styles.donorHistoryDeleteBtn}
+                      onPress={() => handleDeleteBloodDonationRecord(r.id, donorHistoryModal.donor?.full_name)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
 
             <Pressable
               style={styles.modalCloseBtn}
-              onPress={() => setFulfillModal({ open: false, donationDate: new Date().toISOString().slice(0, 10) })}
+              onPress={() => setDonorHistoryModal({ open: false, records: [], loading: false })}
             >
-              <Text style={styles.modalCloseText}>Cancel</Text>
+              <Text style={styles.modalCloseText}>Close</Text>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL: ADMIN ADD BLOOD DONATION RECORD */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={addRecordModal.open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddRecordModal((prev) => ({ ...prev, open: false }))}
+      >
+        <View style={styles.modalBg}>
+          <View style={styles.modalCardLarge} testID="admin-add-donation-modal">
+            <View style={styles.modalCardHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View style={[styles.modalIconCircle, { backgroundColor: "#FEE2E2" }]}>
+                  <Ionicons name="water" size={20} color="#DC2626" />
+                </View>
+                <View>
+                  <Text style={styles.modalTitleText}>Record Blood Donation</Text>
+                  <Text style={styles.modalSubText}>Logs donation into registry & applies rest period</Text>
+                </View>
+              </View>
+              <Pressable onPress={() => setAddRecordModal((prev) => ({ ...prev, open: false }))} hitSlop={8}>
+                <Ionicons name="close" size={22} color="#64748B" />
+              </Pressable>
+            </View>
+
+            {/* Donor Selector (if not preset) */}
+            {!addRecordModal.donor ? (
+              <View style={{ marginVertical: 8 }}>
+                <Text style={styles.inputLabel}>Select Registered Donor *</Text>
+                <ScrollView style={{ maxHeight: 140, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, marginTop: 4 }}>
+                  {donors.map((d) => {
+                    const isSelected = addRecordModal.donorId === d.id;
+                    return (
+                      <Pressable
+                        key={d.id}
+                        onPress={() => setAddRecordModal((prev) => ({ ...prev, donorId: d.id, donor: d }))}
+                        style={[styles.donorPickRow, isSelected && styles.donorPickRowSelected]}
+                      >
+                        <BloodGroupBadge group={d.blood_group} size="sm" />
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            <Text style={styles.donorPickName}>{d.full_name}</Text>
+                            {d.donor_number ? (
+                              <View style={styles.donorIdPill}>
+                                <Ionicons name="id-card-outline" size={10} color="#2563EB" />
+                                <Text style={styles.donorIdPillText}>{d.donor_number}</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Text style={styles.donorPickSub}>+91 {d.mobile} • {d.district || d.place}</Text>
+                        </View>
+                        {isSelected ? <Ionicons name="checkmark-circle" size={16} color={colors.brandPrimary} /> : null}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : (
+              <View style={styles.donorPresetBadgeBox}>
+                <BloodGroupBadge group={addRecordModal.donor.blood_group} size="sm" />
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={styles.donorPickName}>{addRecordModal.donor.full_name}</Text>
+                    {addRecordModal.donor.donor_number ? (
+                      <View style={styles.donorIdPill}>
+                        <Ionicons name="id-card-outline" size={10} color="#2563EB" />
+                        <Text style={styles.donorIdPillText}>{addRecordModal.donor.donor_number}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.donorPickSub}>+91 {addRecordModal.donor.mobile} • {addRecordModal.donor.district}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Donation Date */}
+            <View style={{ marginVertical: 8 }}>
+              <DatePickerField
+                testID="admin-record-donation-date"
+                label="Donation Date (DD-MM-YYYY) *"
+                value={addRecordModal.donationDate}
+                onChange={(d) => setAddRecordModal((prev) => ({ ...prev, donationDate: d }))}
+                maxDate={new Date()}
+              />
+            </View>
+
+            {/* Hospital / Camp Name */}
+            <View style={{ marginBottom: 10 }}>
+              <Text style={styles.inputLabel}>Hospital or Blood Bank Name *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g., General Hospital, Karaikal / Vinayaka Mission"
+                placeholderTextColor="#94A3B8"
+                value={addRecordModal.hospital}
+                onChangeText={(h) => setAddRecordModal((prev) => ({ ...prev, hospital: h }))}
+              />
+            </View>
+
+            {/* Units */}
+            <View style={{ marginBottom: 10 }}>
+              <Text style={styles.inputLabel}>Units Donated</Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                {["1", "2"].map((u) => (
+                  <Pressable
+                    key={u}
+                    onPress={() => setAddRecordModal((prev) => ({ ...prev, units: u }))}
+                    style={[styles.unitChip, addRecordModal.units === u && styles.unitChipActive]}
+                  >
+                    <Text style={[styles.unitChipText, addRecordModal.units === u && styles.unitChipTextActive]}>
+                      {u} Unit
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Notes */}
+            <View style={{ marginBottom: 12 }}>
+              <Text style={styles.inputLabel}>Notes / Certificate Ref (Optional)</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g., Emergency requisition fulfillment, Camp Certificate #104"
+                placeholderTextColor="#94A3B8"
+                value={addRecordModal.notes}
+                onChangeText={(n) => setAddRecordModal((prev) => ({ ...prev, notes: n }))}
+              />
+            </View>
+
+            {/* Donation Proof / Certificate Image Upload */}
+            <View style={{ marginBottom: 14 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <Text style={styles.inputLabel}>Donation Proof / Certificate Photo</Text>
+                <Text style={{ fontSize: 10, color: "#059669", fontWeight: "700" }}>Verified</Text>
+              </View>
+
+              {addRecordProofImage ? (
+                <View style={styles.proofSelectedBox}>
+                  <Image source={{ uri: addRecordProofImage.uri }} style={styles.proofPreviewThumb} resizeMode="cover" />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.proofSelectedTitle} numberOfLines={1}>Photo attached</Text>
+                    <Text style={styles.proofSelectedSub}>Will be uploaded securely to cloud storage</Text>
+                  </View>
+                  <Pressable
+                    style={styles.proofRemoveBtn}
+                    onPress={() => setAddRecordProofImage(null)}
+                    disabled={addRecordModal.submitting}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#EF4444" />
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={styles.proofUploadRow}>
+                  <Pressable
+                    style={styles.proofPickerBtn}
+                    onPress={async () => {
+                      const res = await takeDonationProofPhoto();
+                      if (!res.cancelled && res.uri) setAddRecordProofImage({ uri: res.uri, base64: res.base64 });
+                    }}
+                    disabled={addRecordModal.submitting}
+                  >
+                    <Ionicons name="camera-outline" size={16} color={colors.brandPrimary} />
+                    <Text style={styles.proofPickerBtnText}>Camera</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.proofPickerBtn}
+                    onPress={async () => {
+                      const res = await pickDonationProofImage();
+                      if (!res.cancelled && res.uri) setAddRecordProofImage({ uri: res.uri, base64: res.base64 });
+                    }}
+                    disabled={addRecordModal.submitting}
+                  >
+                    <Ionicons name="images-outline" size={16} color={colors.brandPrimary} />
+                    <Text style={styles.proofPickerBtnText}>Gallery</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+
+            {/* Actions */}
+            <View style={styles.modalActionRow}>
+              <Pressable
+                style={styles.modalCancelBtn}
+                onPress={() => {
+                  setAddRecordProofImage(null);
+                  setAddRecordModal((prev) => ({ ...prev, open: false }));
+                }}
+                disabled={addRecordModal.submitting}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.modalSubmitBtn, (!addRecordModal.donorId || addRecordModal.submitting) && styles.btnNotifyDisabled]}
+                onPress={handleAddDonationForDonor}
+                disabled={!addRecordModal.donorId || addRecordModal.submitting}
+              >
+                {addRecordModal.submitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
+                    <Text style={styles.modalSubmitBtnText}>Record & Apply Rest</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL: ADMIN FULL IMAGE PREVIEW */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={!!adminPreviewImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAdminPreviewImage(null)}
+      >
+        <View style={styles.imagePreviewModalBg}>
+          <View style={styles.imagePreviewContainer}>
+            <View style={styles.imagePreviewHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="ribbon-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.imagePreviewTitle}>Donation Proof / Certificate</Text>
+              </View>
+              <Pressable
+                style={styles.imagePreviewCloseBtn}
+                onPress={() => setAdminPreviewImage(null)}
+                hitSlop={10}
+              >
+                <Ionicons name="close" size={22} color="#FFFFFF" />
+              </Pressable>
+            </View>
+
+            {adminPreviewImage ? (
+              <Image
+                source={{ uri: adminPreviewImage }}
+                style={styles.imagePreviewFull}
+                resizeMode="contain"
+              />
+            ) : null}
+
+            <View style={styles.imagePreviewFooter}>
+              <Text style={styles.imagePreviewFooterText}>Verified Certificate Document</Text>
+              <Pressable
+                style={styles.imagePreviewOpenBrowserBtn}
+                onPress={() => {
+                  if (adminPreviewImage) Linking.openURL(adminPreviewImage);
+                }}
+              >
+                <Text style={styles.imagePreviewOpenBrowserText}>Open Full Resolution ↗</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL: FULFILL BLOOD REQUEST (LINK DONOR & COOLDOWN) */}
+      {/* ========================================================================= */}
+      <Modal
+        visible={fulfillModal.open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!fulfillModal.submitting) {
+            setFulfillModal((p) => ({ ...p, open: false }));
+          }
+        }}
+      >
+        <View style={styles.modalBg}>
+          <View style={styles.fulfillModalCard} testID="fulfill-modal">
+            {/* Modal Header */}
+            <View style={styles.fulfillModalHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
+                <View style={styles.fulfillModalHeaderIconWrap}>
+                  <Ionicons name="checkmark-done-circle" size={24} color="#059669" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fulfillModalTitle}>Fulfill Blood Request</Text>
+                  <Text style={styles.fulfillModalSubtitle}>
+                    Confirm blood unit provision & log donor fulfillment
+                  </Text>
+                </View>
+              </View>
+              <Pressable
+                style={styles.fulfillModalCloseBtn}
+                onPress={() => setFulfillModal((p) => ({ ...p, open: false }))}
+                hitSlop={8}
+                disabled={fulfillModal.submitting}
+              >
+                <Ionicons name="close" size={20} color="#64748B" />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              style={{ maxHeight: 520 }}
+              contentContainerStyle={{ paddingBottom: 10 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Request Snapshot Card */}
+              {fulfillModal.request ? (
+                <View style={styles.fulfillReqBanner}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <BloodGroupBadge group={fulfillModal.request.blood_group} size="sm" />
+                      <Text style={styles.fulfillReqPatientName}>{fulfillModal.request.patient_name}</Text>
+                    </View>
+                    <View style={styles.fulfillReqUrgencyPill}>
+                      <Text style={styles.fulfillReqUrgencyText}>
+                        {fulfillModal.request.urgency || "Emergency"} • {fulfillModal.request.units_required || 1} Unit(s)
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.fulfillReqMetaGrid}>
+                    <View style={styles.fulfillReqMetaItem}>
+                      <Ionicons name="business-outline" size={13} color="#64748B" />
+                      <Text style={styles.fulfillReqMetaText} numberOfLines={1}>
+                        {fulfillModal.request.hospital || "Hospital / Blood Bank"}
+                      </Text>
+                    </View>
+                    <View style={styles.fulfillReqMetaItem}>
+                      <Ionicons name="location-outline" size={13} color="#64748B" />
+                      <Text style={styles.fulfillReqMetaText} numberOfLines={1}>
+                        {fulfillModal.request.area ? `${fulfillModal.request.area}, ` : ""}{fulfillModal.request.district || "Karaikal"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Attribution Type Selector */}
+              <Text style={styles.fulfillSectionHeading}>HOW WAS THIS REQUEST FULFILLED?</Text>
+
+              <View style={styles.fulfillTypeGrid}>
+                {/* Option 1: Unregistered / Walk-in */}
+                <Pressable
+                  style={[
+                    styles.fulfillTypeCard,
+                    fulfillModal.donorType === "unregistered" && styles.fulfillTypeCardActive,
+                  ]}
+                  onPress={() => setFulfillModal((p) => ({ ...p, donorType: "unregistered", donorId: undefined }))}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                    <View style={[styles.fulfillRadio, fulfillModal.donorType === "unregistered" && styles.fulfillRadioActive]}>
+                      {fulfillModal.donorType === "unregistered" ? <View style={styles.fulfillRadioDot} /> : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.fulfillTypeTitle, fulfillModal.donorType === "unregistered" && styles.fulfillTypeTitleActive]}>
+                        External / Hospital Donor
+                      </Text>
+                      <Text style={styles.fulfillTypeSub}>
+                        Walk-in volunteer, external bank, or non-registered donor. No rest cooldown recorded.
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+
+                {/* Option 2: Registered KK Life Drop Donor */}
+                <Pressable
+                  style={[
+                    styles.fulfillTypeCard,
+                    fulfillModal.donorType === "registered" && styles.fulfillTypeCardActive,
+                  ]}
+                  onPress={() => setFulfillModal((p) => ({ ...p, donorType: "registered" }))}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                    <View style={[styles.fulfillRadio, fulfillModal.donorType === "registered" && styles.fulfillRadioActive]}>
+                      {fulfillModal.donorType === "registered" ? <View style={styles.fulfillRadioDot} /> : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Text style={[styles.fulfillTypeTitle, fulfillModal.donorType === "registered" && styles.fulfillTypeTitleActive]}>
+                          Registered Lifesaver Donor
+                        </Text>
+                        <View style={styles.fulfillRecommendedPill}>
+                          <Text style={styles.fulfillRecommendedText}>Logs Cooldown</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.fulfillTypeSub}>
+                        Links to donor profile, credits history, and activates safety cooldown (90/120d).
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+              </View>
+
+              {/* If Registered Selected: Search & Donor Picker */}
+              {fulfillModal.donorType === "registered" ? (
+                <View style={styles.fulfillDonorPickerContainer}>
+                  {/* Search Bar */}
+                  <View style={styles.fulfillDonorSearchRow}>
+                    <Ionicons name="search" size={15} color="#94A3B8" />
+                    <TextInput
+                      style={styles.fulfillDonorSearchInput}
+                      placeholder="Search by donor name, KKLD ID, or mobile..."
+                      placeholderTextColor="#94A3B8"
+                      value={fulfillModal.search || ""}
+                      onChangeText={(txt) => setFulfillModal((p) => ({ ...p, search: txt }))}
+                    />
+                    {fulfillModal.search ? (
+                      <Pressable onPress={() => setFulfillModal((p) => ({ ...p, search: "" }))} hitSlop={6}>
+                        <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {/* Filter Chips & Multi-Select Bulk Actions */}
+                  <View style={styles.fulfillFilterAndActionsRow}>
+                    <View style={styles.fulfillFilterRow}>
+                      <Pressable
+                        style={[styles.fulfillFilterChip, fulfillModal.filterMatchingOnly && styles.fulfillFilterChipActive]}
+                        onPress={() => setFulfillModal((p) => ({ ...p, filterMatchingOnly: true }))}
+                      >
+                        <Text style={[styles.fulfillFilterChipText, fulfillModal.filterMatchingOnly && styles.fulfillFilterChipTextActive]}>
+                          {fulfillModal.request?.blood_group ? `${fulfillModal.request.blood_group} Donors (${matchingDonorsCount})` : "Matching Donors"}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.fulfillFilterChip, !fulfillModal.filterMatchingOnly && styles.fulfillFilterChipActive]}
+                        onPress={() => setFulfillModal((p) => ({ ...p, filterMatchingOnly: false }))}
+                      >
+                        <Text style={[styles.fulfillFilterChipText, !fulfillModal.filterMatchingOnly && styles.fulfillFilterChipTextActive]}>
+                          All Donors ({donors.length})
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      {filteredFulfillDonors.length > 0 ? (
+                        <Pressable
+                          style={styles.fulfillBulkActionBtn}
+                          onPress={() => selectAllFilteredFulfillDonors(filteredFulfillDonors.map((d) => d.id))}
+                        >
+                          <Text style={styles.fulfillBulkActionText}>
+                            {filteredFulfillDonors.every((d) => fulfillModal.donorIds.includes(d.id))
+                              ? "Deselect Filtered"
+                              : "Select All Filtered"}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                      {fulfillModal.donorIds.length > 0 ? (
+                        <Pressable
+                          style={[styles.fulfillBulkActionBtn, { backgroundColor: "#FEE2E2", borderColor: "#FECACA" }]}
+                          onPress={() => setFulfillModal((p) => ({ ...p, donorIds: [] }))}
+                        >
+                          <Text style={[styles.fulfillBulkActionText, { color: "#DC2626" }]}>
+                            Clear ({fulfillModal.donorIds.length})
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  {/* Selected Donors Tag Pills Strip */}
+                  {selectedFulfillDonorsList.length > 0 ? (
+                    <View style={styles.fulfillSelectedTagsBox}>
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                        <Text style={styles.fulfillSelectedCountLabel}>
+                          {selectedFulfillDonorsList.length} Donor(s) Selected for Fulfillment:
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                        {selectedFulfillDonorsList.map((d) => (
+                          <View key={d.id} style={styles.fulfillSelectedTag}>
+                            <BloodGroupBadge group={d.blood_group} size="sm" />
+                            <Text style={styles.fulfillSelectedTagName}>{d.full_name}</Text>
+                            {d.donor_number ? (
+                              <Text style={styles.fulfillSelectedTagId}>{d.donor_number}</Text>
+                            ) : null}
+                            <Pressable onPress={() => toggleFulfillDonor(d.id)} hitSlop={6}>
+                              <Ionicons name="close-circle" size={14} color="#64748B" />
+                            </Pressable>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {/* Multi-Select Donor List */}
+                  <ScrollView
+                    style={styles.fulfillDonorListScroll}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={true}
+                  >
+                    {filteredFulfillDonors.length === 0 ? (
+                      <View style={styles.fulfillEmptyBox}>
+                        <Ionicons name="people-outline" size={24} color="#94A3B8" />
+                        <Text style={styles.fulfillEmptyText}>No registered donors match criteria</Text>
+                        <Text style={styles.fulfillEmptySub}>Try searching a different name or switch to "All Donors"</Text>
+                      </View>
+                    ) : (
+                      filteredFulfillDonors.map((d) => {
+                        const isSelected = fulfillModal.donorIds.includes(d.id);
+                        return (
+                          <Pressable
+                            key={d.id}
+                            style={[styles.fulfillDonorItem, isSelected && styles.fulfillDonorItemActive]}
+                            onPress={() => toggleFulfillDonor(d.id)}
+                          >
+                            {/* Multi-Select Checkbox */}
+                            <View style={[styles.fulfillCheckbox, isSelected && styles.fulfillCheckboxActive]}>
+                              {isSelected ? <Ionicons name="checkmark" size={12} color="#FFFFFF" /> : null}
+                            </View>
+                            <BloodGroupBadge group={d.blood_group} size="sm" />
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                <Text style={styles.fulfillItemName}>{d.full_name}</Text>
+                                {d.donor_number ? (
+                                  <View style={styles.donorIdPill}>
+                                    <Ionicons name="id-card-outline" size={10} color="#2563EB" />
+                                    <Text style={styles.donorIdPillText}>{d.donor_number}</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                              <Text style={styles.fulfillItemMeta}>
+                                +91 {d.mobile} • {d.area ? `${d.area}, ` : ""}{d.district || d.place}
+                              </Text>
+                            </View>
+                            {isSelected ? (
+                              <View style={styles.fulfillItemCheckBadge}>
+                                <Text style={styles.fulfillItemCheckBadgeText}>Selected</Text>
+                              </View>
+                            ) : null}
+                          </Pressable>
+                        );
+                      })
+                    )}
+                  </ScrollView>
+                </View>
+              ) : null}
+
+              {/* Donation Date Row */}
+              <View style={styles.fulfillDateBox}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fulfillDateLabel}>DONATION FULFILLMENT DATE</Text>
+                  <View style={styles.fulfillDateInputRow}>
+                    <Ionicons name="calendar-outline" size={16} color="#059669" />
+                    <TextInput
+                      style={styles.fulfillDateInput}
+                      value={fulfillModal.donationDate}
+                      onChangeText={(txt) => setFulfillModal((p) => ({ ...p, donationDate: txt }))}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#94A3B8"
+                    />
+                  </View>
+                </View>
+                <Pressable
+                  style={styles.fulfillTodayBtn}
+                  onPress={() => setFulfillModal((p) => ({ ...p, donationDate: new Date().toISOString().slice(0, 10) }))}
+                >
+                  <Text style={styles.fulfillTodayBtnText}>Today</Text>
+                </Pressable>
+              </View>
+
+              {/* Medical Rest Cooldown Callout */}
+              {fulfillModal.donorType === "registered" && fulfillModal.donorIds.length > 0 ? (
+                <View style={styles.fulfillCooldownBanner}>
+                  <Ionicons name="shield-checkmark" size={18} color="#059669" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fulfillCooldownTitle}>
+                      Safety Cooldown Applied to {fulfillModal.donorIds.length} Donor(s)
+                    </Text>
+                    <Text style={styles.fulfillCooldownBody}>
+                      All {fulfillModal.donorIds.length} selected donor(s) will enter mandatory medical rest (90 days for male / 120 days for female) starting from the donation date. Each will be exempted from further emergency broadcast notifications until their rest completes.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </ScrollView>
+
+            {/* Footer Buttons */}
+            <View style={styles.fulfillModalFooter}>
+              <Pressable
+                style={styles.fulfillBtnCancel}
+                onPress={() => setFulfillModal((p) => ({ ...p, open: false }))}
+                disabled={fulfillModal.submitting}
+              >
+                <Text style={styles.fulfillBtnCancelText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.fulfillBtnSubmit,
+                  fulfillModal.donorType === "registered" && fulfillModal.donorIds.length === 0 && styles.fulfillBtnSubmitDisabled,
+                ]}
+                onPress={submitFulfill}
+                disabled={fulfillModal.submitting || (fulfillModal.donorType === "registered" && fulfillModal.donorIds.length === 0)}
+              >
+                {fulfillModal.submitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-done" size={17} color="#FFFFFF" />
+                    <Text style={styles.fulfillBtnSubmitText}>
+                      {fulfillModal.donorType === "registered"
+                        ? (fulfillModal.donorIds.length > 0
+                            ? `Fulfill with ${fulfillModal.donorIds.length} Donor(s)`
+                            : "Select Donors to Fulfill")
+                        : "Complete Fulfillment (External / Walk-in)"}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -5941,29 +7047,126 @@ const styles = StyleSheet.create({
     color: "#DC2626",
   },
 
-  /* Fulfill Modal */
-  fulfillSelectLabel: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#334155",
-    alignSelf: "flex-start",
-    marginTop: 12,
+  /* Fulfill Modal (Enterprise Design) */
+  fulfillModalCard: {
+    width: "100%",
+    maxWidth: 580,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: spacing.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 24,
+    elevation: 10,
   },
-  fulfillDonorRow: {
+  fulfillModalHeader: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 10,
-    borderRadius: 8,
+    justifyContent: "space-between",
+    marginBottom: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  fulfillModalHeaderIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#ECFDF5",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+  },
+  fulfillModalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: -0.3,
+  },
+  fulfillModalSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  fulfillModalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fulfillReqBanner: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    backgroundColor: "#FFFFFF",
-    marginBottom: 8,
+    marginBottom: 14,
   },
-  fulfillDonorRowSelected: {
-    borderColor: colors.brandGreen,
+  fulfillReqPatientName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  fulfillReqUrgencyPill: {
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  fulfillReqUrgencyText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#DC2626",
+  },
+  fulfillReqMetaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+  },
+  fulfillReqMetaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: "48%",
+  },
+  fulfillReqMetaText: {
+    fontSize: 11,
+    color: "#475569",
+    fontWeight: "500",
+  },
+  fulfillSectionHeading: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  fulfillTypeGrid: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  fulfillTypeCard: {
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "#FFFFFF",
+  },
+  fulfillTypeCardActive: {
+    borderColor: "#059669",
     backgroundColor: "#F0FDF4",
   },
-  radioCircle: {
+  fulfillRadio: {
     width: 18,
     height: 18,
     borderRadius: 9,
@@ -5971,38 +7174,362 @@ const styles = StyleSheet.create({
     borderColor: "#CBD5E1",
     alignItems: "center",
     justifyContent: "center",
+    marginTop: 2,
   },
-  radioCircleActive: {
-    borderColor: colors.brandGreen,
-    borderWidth: 5,
+  fulfillRadioActive: {
+    borderColor: "#059669",
+    borderWidth: 2,
   },
-  fulfillDonorName: {
+  fulfillRadioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#059669",
+  },
+  fulfillTypeTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1E293B",
+  },
+  fulfillTypeTitleActive: {
+    color: "#065F46",
+    fontWeight: "800",
+  },
+  fulfillTypeSub: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  fulfillRecommendedPill: {
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+  },
+  fulfillRecommendedText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#059669",
+  },
+  fulfillDonorPickerContainer: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginBottom: 12,
+  },
+  fulfillDonorSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 8,
+  },
+  fulfillDonorSearchInput: {
+    flex: 1,
+    fontSize: 12,
+    color: "#0F172A",
+    padding: 0,
+  },
+  fulfillFilterAndActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  fulfillFilterRow: {
+    flexDirection: "row",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  fulfillFilterChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: radius.pill,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+  },
+  fulfillFilterChipActive: {
+    backgroundColor: "#059669",
+    borderColor: "#059669",
+  },
+  fulfillFilterChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  fulfillFilterChipTextActive: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+  fulfillBulkActionBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+  },
+  fulfillBulkActionText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#1E293B",
+  },
+  fulfillSelectedTagsBox: {
+    backgroundColor: "#ECFDF5",
+    borderRadius: 10,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    marginBottom: 8,
+  },
+  fulfillSelectedCountLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#065F46",
+  },
+  fulfillSelectedTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+  },
+  fulfillSelectedTagName: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  fulfillSelectedTagId: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#1D4ED8",
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  fulfillDonorListScroll: {
+    maxHeight: 180,
+  },
+  fulfillDonorItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginBottom: 6,
+  },
+  fulfillDonorItemActive: {
+    borderColor: "#059669",
+    backgroundColor: "#ECFDF5",
+  },
+  fulfillCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 6,
+  },
+  fulfillCheckboxActive: {
+    backgroundColor: "#059669",
+    borderColor: "#059669",
+  },
+  fulfillItemCheckBadge: {
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    marginLeft: 6,
+  },
+  fulfillItemCheckBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#059669",
+  },
+  fulfillItemRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 6,
+  },
+  fulfillItemRadioActive: {
+    backgroundColor: "#059669",
+    borderColor: "#059669",
+  },
+  fulfillItemName: {
     fontSize: 13,
     fontWeight: "700",
     color: "#0F172A",
   },
-  fulfillDonorSub: {
+  fulfillItemMeta: {
     fontSize: 11,
     color: "#64748B",
     marginTop: 1,
   },
-  fulfillCooldownNotice: {
-    flexDirection: "row",
+  fulfillEmptyBox: {
+    padding: 16,
     alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FFFBEB",
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#FDE68A",
-    width: "100%",
+    justifyContent: "center",
+  },
+  fulfillEmptyText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
     marginTop: 4,
   },
-  fulfillCooldownText: {
-    flex: 1,
+  fulfillEmptySub: {
     fontSize: 11,
-    color: "#92400E",
+    color: "#94A3B8",
+    textAlign: "center",
+    marginTop: 2,
+  },
+  fulfillDateBox: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+    backgroundColor: "#F8FAFC",
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginBottom: 12,
+  },
+  fulfillDateLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  fulfillDateInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    gap: 6,
+  },
+  fulfillDateInput: {
+    flex: 1,
+    fontSize: 13,
+    color: "#0F172A",
+    padding: 0,
     fontWeight: "600",
+  },
+  fulfillTodayBtn: {
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  fulfillTodayBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#059669",
+  },
+  fulfillCooldownBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#ECFDF5",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    marginBottom: 8,
+  },
+  fulfillCooldownTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#065F46",
+    marginBottom: 2,
+  },
+  fulfillCooldownBody: {
+    fontSize: 11,
+    color: "#047857",
+    lineHeight: 15,
+  },
+  fulfillModalFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  fulfillBtnCancel: {
+    flex: 1,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingVertical: 11,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fulfillBtnCancelText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  fulfillBtnSubmit: {
+    flex: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#059669",
+    paddingVertical: 11,
+    borderRadius: 10,
+    shadowColor: "#059669",
+    shadowOpacity: 0.25,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  fulfillBtnSubmitDisabled: {
+    backgroundColor: "#94A3B8",
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  fulfillBtnSubmitText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
   },
 
   /* Access Denied */
@@ -7137,5 +8664,508 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "800",
+  },
+  // Donor ID Pills
+  donorIdPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3.5,
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  donorIdPillText: {
+    color: "#1D4ED8",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  btnRecordDonationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.brandPrimary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+  },
+  btnRecordDonationHeaderText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  // Donation Log Cards
+  donationLogCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  donationLogHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  donationLogDonorName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  donationLogMobileText: {
+    fontSize: 12,
+    color: colors.brandBlue,
+    fontWeight: "600",
+  },
+  btnDeleteDonationLog: {
+    padding: 6,
+    backgroundColor: "#FEF2F2",
+    borderRadius: radius.pill,
+  },
+  donationLogDetailsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 12,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  donationLogDetailItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  donationLogDateText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  donationLogHospitalText: {
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  donationLogUnitsText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.brandPrimary,
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: radius.pill,
+  },
+  donationLogNotesBox: {
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginTop: 4,
+  },
+  donationLogNotesText: {
+    fontSize: 11,
+    color: "#64748B",
+    fontStyle: "italic",
+  },
+  // Large Modals
+  modalCardLarge: {
+    width: "100%",
+    maxWidth: 540,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: spacing.lg,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  modalCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  modalIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalTitleText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  modalSubText: {
+    fontSize: 11.5,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  historyDonorSummaryStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: radius.md,
+    padding: 10,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  historySummaryCol: {
+    flex: 1,
+    alignItems: "center",
+  },
+  historySummaryNum: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  historySummaryLbl: {
+    fontSize: 10,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  historySummaryDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: "#E2E8F0",
+  },
+  btnAddRecordFromHistory: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brandPrimary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    marginLeft: 8,
+  },
+  btnAddRecordFromHistoryText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  donorHistoryItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  donorHistoryItemLeft: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    flex: 1,
+  },
+  donorHistoryDot: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.brandPrimary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  donorHistoryDateText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  donorHistoryHospitalText: {
+    fontSize: 12,
+    color: "#475569",
+    marginTop: 1,
+  },
+  donorHistoryNotesText: {
+    fontSize: 11,
+    color: "#64748B",
+    fontStyle: "italic",
+    marginTop: 1,
+  },
+  donorHistoryDeleteBtn: {
+    padding: 6,
+    marginLeft: 8,
+  },
+  donorPickRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  donorPickRowSelected: {
+    backgroundColor: "#FEF2F2",
+  },
+  donorPickName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  donorPickSub: {
+    fontSize: 11,
+    color: "#64748B",
+  },
+  donorPresetBadgeBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#EFF6FF",
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    marginVertical: 4,
+  },
+  timelineBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: radius.pill,
+  },
+  timelineBadgeAdmin: {
+    backgroundColor: "#EFF6FF",
+  },
+  timelineBadgeSelf: {
+    backgroundColor: "#F1F5F9",
+  },
+  timelineBadgeText: {
+    fontSize: 9.5,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+    marginBottom: 4,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: "#0F172A",
+    backgroundColor: "#FFFFFF",
+  },
+  unitChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#F8FAFC",
+  },
+  unitChipActive: {
+    borderColor: colors.brandPrimary,
+    backgroundColor: "#FEF2F2",
+  },
+  unitChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  unitChipTextActive: {
+    color: colors.brandPrimary,
+    fontWeight: "800",
+  },
+  modalActionRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 12,
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#F8FAFC",
+  },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  modalSubmitBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandPrimary,
+  },
+  modalSubmitBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  // Admin Proof Thumbnails & Preview Styles
+  adminProofRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: radius.sm,
+    padding: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  adminProofThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
+    backgroundColor: "#E2E8F0",
+  },
+  adminProofTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  adminProofSub: {
+    fontSize: 10.5,
+    color: "#64748B",
+    marginTop: 1,
+  },
+  adminProofRowSmall: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 4,
+    padding: 6,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  adminProofThumbSmall: {
+    width: 28,
+    height: 28,
+    borderRadius: 4,
+  },
+  adminProofTitleSmall: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.brandBlue,
+  },
+  proofSelectedBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: radius.md,
+    padding: 8,
+  },
+  proofPreviewThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
+    backgroundColor: "#E2E8F0",
+  },
+  proofSelectedTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#166534",
+  },
+  proofSelectedSub: {
+    fontSize: 10.5,
+    color: "#15803D",
+  },
+  proofRemoveBtn: {
+    padding: 8,
+  },
+  proofUploadRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  proofPickerBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: colors.brandPrimary,
+    borderRadius: radius.md,
+    paddingVertical: 10,
+  },
+  proofPickerBtnText: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: colors.brandPrimary,
+  },
+  imagePreviewModalBg: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.md,
+  },
+  imagePreviewContainer: {
+    width: "100%",
+    maxWidth: 600,
+    height: "80%",
+    backgroundColor: "#0F172A",
+    borderRadius: 16,
+    overflow: "hidden",
+    flexDirection: "column",
+  },
+  imagePreviewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#1E293B",
+  },
+  imagePreviewTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  imagePreviewCloseBtn: {
+    padding: 4,
+  },
+  imagePreviewFull: {
+    flex: 1,
+    width: "100%",
+    backgroundColor: "#020617",
+  },
+  imagePreviewFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#1E293B",
+  },
+  imagePreviewFooterText: {
+    fontSize: 11,
+    color: "#94A3B8",
+  },
+  imagePreviewOpenBrowserBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  imagePreviewOpenBrowserText: {
+    fontSize: 11,
+    color: "#38BDF8",
+    fontWeight: "700",
   },
 });

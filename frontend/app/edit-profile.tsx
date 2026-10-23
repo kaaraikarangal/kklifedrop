@@ -33,8 +33,10 @@ const GENDERS = ["Male", "Female", "Other"];
 
 export default function EditProfile() {
   const insets = useSafeAreaInsets();
+  const scrollRef = React.useRef<ScrollView>(null);
   const [fetching, setFetching] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Form State
   const [f, setF] = useState<any>({
@@ -56,8 +58,18 @@ export default function EditProfile() {
     donation_opt_in: true,
   });
 
-  const setField = (key: string, val: any) =>
+  const setField = (key: string, val: any) => {
     setF((prev: any) => ({ ...prev, [key]: val }));
+    if (errors[key] || (key === "area" && errors.place) || (key === "place" && errors.area)) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        if (key === "area") delete next.place;
+        if (key === "place") delete next.area;
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     async function loadCurrentProfile() {
@@ -95,45 +107,54 @@ export default function EditProfile() {
   }, []);
 
   async function handleSave() {
-    // 1. Validations
+    const newErrors: Record<string, string> = {};
+
     if (!f.full_name?.trim()) {
-      return toast("error", "Name Required", "Please enter your full name.");
+      newErrors.full_name = "Full name is required";
     }
-    if (!f.area?.trim()) {
-      return toast("error", "Area Required", "Please enter your residential area.");
-    }
-    if (!f.place?.trim()) {
-      return toast("error", "Place Required", "Please enter your city/place.");
+    if (!f.area?.trim() && !f.place?.trim()) {
+      newErrors.area = "Constituency is required";
+      newErrors.place = "Constituency is required";
     }
     if (!f.district?.trim()) {
-      return toast("error", "District Required", "Please enter your district.");
+      newErrors.district = "District is required";
     }
-    if (!f.pincode?.trim() || f.pincode.replace(/\D/g, "").length !== 6) {
-      return toast("error", "Invalid Pincode", "Please enter a valid 6-digit postal code.");
+    if (!f.state?.trim()) {
+      newErrors.state = "State is required";
+    }
+    const cleanPincode = (f.pincode || "").replace(/\D/g, "");
+    if (!cleanPincode) {
+      newErrors.pincode = "Pincode is required";
+    } else if (cleanPincode.length !== 6) {
+      newErrors.pincode = "Enter a valid 6-digit postal code";
     }
     if (f.email?.trim()) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(f.email.trim())) {
-        return toast("error", "Invalid Email", "Please enter a valid email address.");
-      }
-    }
-    if (f.new_aadhaar?.trim()) {
-      const cleanAadhaar = f.new_aadhaar.replace(/\D/g, "");
-      if (cleanAadhaar.length !== 12) {
-        return toast("error", "Invalid Aadhaar", "Aadhaar must be exactly 12 digits.");
+        newErrors.email = "Enter a valid email address";
       }
     }
     if (f.date_of_birth?.trim()) {
       if (!isValidDDMMYYYY(f.date_of_birth.trim()) && !/^\d{4}-\d{2}-\d{2}$/.test(f.date_of_birth.trim())) {
-        return toast("error", "Invalid Date of Birth", "Please format as DD-MM-YYYY.");
+        newErrors.date_of_birth = "Please format as DD-MM-YYYY";
       }
     }
     if (f.last_donation_date?.trim()) {
       if (!isValidDDMMYYYY(f.last_donation_date.trim()) && !/^\d{4}-\d{2}-\d{2}$/.test(f.last_donation_date.trim())) {
-        return toast("error", "Invalid Donation Date", "Please format as DD-MM-YYYY.");
+        newErrors.last_donation_date = "Please format as DD-MM-YYYY";
       }
     }
 
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      toast("error", "Incomplete Form", "Please fill in all highlighted required fields.");
+      return;
+    }
+
+    f.area = (f.area || f.place || "").trim();
+    f.place = (f.place || f.area || "").trim();
+    setErrors({});
     setSaving(true);
     try {
       const payload: any = {
@@ -152,9 +173,12 @@ export default function EditProfile() {
         last_donation_date: f.last_donation_date?.trim() ? formatDateToYYYYMMDD(f.last_donation_date.trim()) : null,
       };
 
+      /*
+      // [AADHAAR_FEATURE] Uncomment to include updated Aadhaar in payload upon release:
       if (f.new_aadhaar?.trim()) {
         payload.aadhaar = f.new_aadhaar.replace(/\D/g, "");
       }
+      */
 
       await api("/donors/me", {
         auth: true,
@@ -210,6 +234,7 @@ export default function EditProfile() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{
           paddingHorizontal: spacing.lg,
           paddingTop: spacing.md,
@@ -234,6 +259,18 @@ export default function EditProfile() {
           </View>
         </View>
 
+        {Object.keys(errors).length > 0 && (
+          <View style={styles.errorSummaryBanner}>
+            <Ionicons name="alert-circle" size={20} color={colors.error} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.errorSummaryTitle}>Please complete required fields</Text>
+              <Text style={styles.errorSummaryText}>
+                Highlighted fields in red must be completed before saving your profile changes.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* SECTION 1: Personal Details */}
         <Text style={styles.sectionHeader}>Personal Information</Text>
         <View style={styles.card}>
@@ -243,6 +280,7 @@ export default function EditProfile() {
             value={f.full_name}
             onChangeText={(v) => setField("full_name", v)}
             placeholder="e.g. Barathraj S"
+            error={errors.full_name}
           />
 
           <Text style={styles.fieldLabel}>Gender</Text>
@@ -276,6 +314,7 @@ export default function EditProfile() {
             onChange={(ddmmyyyy) => setField("date_of_birth", ddmmyyyy)}
             placeholder="DD-MM-YYYY"
             maxDate={new Date()}
+            error={errors.date_of_birth}
           />
 
           <Text style={styles.fieldLabel}>Blood Group *</Text>
@@ -310,6 +349,7 @@ export default function EditProfile() {
             placeholder="e.g. donor@example.com"
             keyboardType="email-address"
             autoCapitalize="none"
+            error={errors.email}
           />
         </View>
 
@@ -323,11 +363,22 @@ export default function EditProfile() {
             district={f.district}
             place={f.place}
             area={f.area}
+            errors={{
+              pincode: errors.pincode,
+              state: errors.state,
+              district: errors.district,
+              place: errors.place,
+              area: errors.area,
+            }}
             onChange={(field, value) => setField(field, value)}
           />
         </View>
 
-        {/* SECTION 4: Identity & Aadhaar */}
+        {/*
+        // =========================================================================
+        // [AADHAAR_FEATURE] SECTION 4: Identity & Aadhaar
+        // Uncomment below block to re-enable Aadhaar editing upon release
+        // =========================================================================
         <Text style={styles.sectionHeader}>Identification</Text>
         <View style={styles.card}>
           <View style={styles.aadhaarStatusRow}>
@@ -352,6 +403,7 @@ export default function EditProfile() {
             🔒 Aadhaar numbers are protected with 256-bit encryption. Leave blank to keep current number.
           </Text>
         </View>
+        */}
 
         {/* SECTION 5: Medical & History */}
         <Text style={styles.sectionHeader}>Donation History</Text>
@@ -365,6 +417,7 @@ export default function EditProfile() {
             allowClear
             onClear={() => setField("last_donation_date", "")}
             maxDate={new Date()}
+            error={errors.last_donation_date}
           />
           <Text style={styles.hintText}>
             ℹ️ KK Life Drop enforces a mandatory rest cooldown between donations (90 days for males / 120 days for females) to safeguard donor health.
@@ -480,6 +533,27 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: spacing.md,
     gap: 10,
+  },
+  errorSummaryBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FECACA",
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  errorSummaryTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.error,
+  },
+  errorSummaryText: {
+    fontSize: 12,
+    color: colors.onSurfaceSecondary,
+    marginTop: 2,
+    lineHeight: 16,
   },
   verifiedIconWrap: {
     width: 32,
