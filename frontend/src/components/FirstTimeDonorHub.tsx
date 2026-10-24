@@ -448,7 +448,7 @@ export function FirstTimeDonorHub() {
             <View style={styles.ctaWrap}>
               <Pressable
                 style={styles.registerCtaBtn}
-                onPress={() => router.push("/auth/register")}
+                onPress={() => router.push("/auth/mobile")}
                 testID="hub-to-register-cta-btn"
               >
                 <LinearGradient
@@ -523,7 +523,7 @@ export function FirstTimeDonorHub() {
                 style={styles.previewFooterCta}
                 onPress={() => {
                   setPreviewImage(null);
-                  router.push("/auth/register");
+                  router.push("/auth/mobile");
                 }}
               >
                 <Text style={styles.previewFooterCtaText}>

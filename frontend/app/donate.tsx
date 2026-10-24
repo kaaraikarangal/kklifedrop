@@ -39,7 +39,7 @@ export default function DonateScreen() {
             </View>
             <View style={styles.rzpBadge}>
               <Ionicons name="flash" size={12} color="#10B981" />
-              <Text style={styles.rzpBadgeText}>UPI: kaaraikarangal@dbs & Razorpay</Text>
+              <Text style={styles.rzpBadgeText}>Instant UPI (GPay, PhonePe) & Cards</Text>
             </View>
           </View>
 
@@ -76,7 +76,7 @@ export default function DonateScreen() {
               end={{ x: 1, y: 0 }}
             />
             <Ionicons name="flash" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.donateBtnText}>Donate via Direct UPI or Razorpay</Text>
+            <Text style={styles.donateBtnText}>Donate via Instant UPI or Cards</Text>
           </Pressable>
         </LinearGradient>
 

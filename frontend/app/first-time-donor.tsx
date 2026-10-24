@@ -44,7 +44,7 @@ export default function FirstTimeDonorPage() {
         </View>
         <Pressable
           style={styles.registerHeaderBtn}
-          onPress={() => router.push("/auth/register")}
+          onPress={() => router.push("/auth/mobile")}
           testID="top-register-cta-btn"
         >
           <Text style={styles.registerHeaderBtnText}>Register Now</Text>
@@ -573,7 +573,7 @@ export default function FirstTimeDonorPage() {
 
             <Pressable
               style={styles.primaryRegisterBtn}
-              onPress={() => router.push("/auth/register")}
+              onPress={() => router.push("/auth/mobile")}
               testID="btn-bottom-register"
             >
               <LinearGradient
@@ -643,7 +643,7 @@ export default function FirstTimeDonorPage() {
                 style={styles.modalRegisterBtn}
                 onPress={() => {
                   setPreviewImage(null);
-                  router.push("/auth/register");
+                  router.push("/auth/mobile");
                 }}
               >
                 <Text style={styles.modalRegisterBtnText}>

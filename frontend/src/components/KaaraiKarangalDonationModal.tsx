@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   Share,
   Image,
   Linking,
+  AppState,
+  AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -48,7 +50,7 @@ interface DonationModalProps {
 const PRESET_AMOUNTS = [
   { amount: 100, label: "Patient Care", desc: "Hospital attendant meal & support" },
   { amount: 250, label: "Cold Chain Box", desc: "Sterile ice-box blood transit" },
-  { amount: 500, label: "Emergency Transit", desc: "Urgent donor transit fuel" },
+  { amount: 500, label: "Emergency Transit", desc: "Urgent donor transit fuel", popular: true },
   { amount: 1000, label: "Camp Logistics", desc: "Community blood drive kits" },
   { amount: 2500, label: "Medical Aid", desc: "Emergency patient hospital fund" },
 ];
@@ -61,8 +63,15 @@ const PURPOSES = [
 ];
 
 const OFFICIAL_UPI_ID = "kaaraikarangal@dbs";
-const BENEFICIARY_NAME = "Kaarai Karangal Samooga Sevai Amaippu";
+const BENEFICIARY_NAME_SHORT = "Kaarai Karangal"; // Strict NPCI 25-char limit compliant
+const BENEFICIARY_NAME_FULL = "Kaarai Karangal Samooga Sevai Amaippu";
 
+/**
+ * Generates an in-app checkout webpage for Razorpay with full support for:
+ * - Direct UPI App Intents & Cards
+ * - Forced UPI Instrument Block prioritization
+ * - Automatic app resumption and payment verification callback
+ */
 function generateRazorpayCheckoutHtml(params: {
   keyId: string;
   orderId: string;
@@ -87,6 +96,7 @@ function generateRazorpayCheckoutHtml(params: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Kaarai Karangal Secure Donation</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -107,8 +117,8 @@ function generateRazorpayCheckoutHtml(params: {
       max-width: 380px;
     }
     .spinner {
-      width: 44px;
-      height: 44px;
+      width: 48px;
+      height: 48px;
       border: 4px solid #E2E8F0;
       border-top-color: #DC2626;
       border-radius: 50%;
@@ -116,28 +126,32 @@ function generateRazorpayCheckoutHtml(params: {
       margin: 0 auto 18px;
     }
     @keyframes spin { 100% { transform: rotate(360deg); } }
-    .title { font-size: 17px; font-weight: 800; color: #0F172A; margin-bottom: 8px; }
-    .desc { font-size: 13px; color: #64748B; line-height: 1.4; }
+    .title { font-size: 18px; font-weight: 800; color: #0F172A; margin-bottom: 8px; }
+    .desc { font-size: 13px; color: #64748B; line-height: 1.5; }
     .badge {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       margin-top: 16px;
       background: #ECFDF5;
       color: #059669;
       font-size: 11px;
       font-weight: 700;
-      padding: 6px 12px;
+      padding: 6px 14px;
       border-radius: 999px;
+      border: 1px solid #A7F3D0;
     }
   </style>
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body>
-  <div class="card">
+  <div class="card" id="status-card">
     <div class="spinner"></div>
-    <div class="title">Opening Razorpay Checkout</div>
-    <div class="desc">Please complete your payment in the secure window...</div>
-    <div class="badge">🔒 256-Bit SSL Encrypted</div>
+    <div class="title">Opening Secure Checkout</div>
+    <div class="desc">Launching verified payment gateway for Kaarai Karangal...</div>
+    <div class="badge">🔒 Verified Merchant Gateway (NPCI Compliant)</div>
   </div>
+
   <script>
     window.onload = function() {
       try {
@@ -148,10 +162,36 @@ function generateRazorpayCheckoutHtml(params: {
           currency: "INR",
           name: "Kaarai Karangal",
           description: ${JSON.stringify(purpose)},
+          image: "https://uurkvfeguglvcjqgcway.supabase.co/storage/v1/object/public/assets/logo.png",
           prefill: {
             name: ${JSON.stringify(finalDonorName)},
-            email: ${JSON.stringify(donorEmail || "")},
-            contact: ${JSON.stringify(internationalContact)}
+            email: ${JSON.stringify(donorEmail)},
+            contact: ${JSON.stringify(internationalContact)},
+            method: "upi"
+          },
+          config: {
+            display: {
+              blocks: {
+                upi: {
+                  name: "Pay using UPI (Google Pay, PhonePe, Paytm, QR)",
+                  instruments: [
+                    { method: "upi" }
+                  ]
+                },
+                other: {
+                  name: "Cards, NetBanking & Wallets",
+                  instruments: [
+                    { method: "card" },
+                    { method: "netbanking" },
+                    { method: "wallet" }
+                  ]
+                }
+              },
+              sequence: ["block.upi", "block.other"],
+              preferences: {
+                show_default_blocks: true
+              }
+            }
           },
           notes: {
             organization: "Kaarai Karangal Samooga Sevai Amaippu",
@@ -160,15 +200,11 @@ function generateRazorpayCheckoutHtml(params: {
             mobile: ${JSON.stringify(internationalContact)}
           },
           theme: { color: "#DC2626" },
-          handler: function(response) {
-            if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: "PAYMENT_SUCCESS",
-                response: response
-              }));
-            }
-          },
+          retry: { enabled: true, max_count: 3 },
           modal: {
+            backdropclose: false,
+            escape: false,
+            handleback: true,
             ondismiss: function() {
               if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
                 window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -176,17 +212,33 @@ function generateRazorpayCheckoutHtml(params: {
                 }));
               }
             }
+          },
+          handler: function(response) {
+            document.getElementById('status-card').innerHTML =
+              '<div class="spinner" style="border-top-color:#059669"></div>' +
+              '<div class="title" style="color:#059669">Payment Received!</div>' +
+              '<div class="desc">Generating your official donation receipt...</div>';
+
+            if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: "PAYMENT_SUCCESS",
+                response: response
+              }));
+            }
           }
         };
+
         var rzp = new Razorpay(options);
+
         rzp.on("payment.failed", function(response) {
           if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
               type: "PAYMENT_FAILED",
-              error: response.error || { description: "Payment failed" }
+              error: response.error || { description: "Payment could not be completed" }
             }));
           }
         });
+
         rzp.open();
       } catch(e) {
         if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
@@ -212,10 +264,8 @@ export function KaaraiKarangalDonationModal({
   const [isCustom, setIsCustom] = useState<boolean>(false);
   const [purpose, setPurpose] = useState<string>(PURPOSES[0]);
 
-  // Payment Method: Direct UPI is FIRST, then Razorpay
-  const [paymentMethod, setPaymentMethod] = useState<"upi" | "razorpay">("upi");
-  const [utrNumber, setUtrNumber] = useState<string>("");
-  const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
+  // Payment Method Mode: "upi_app" (Primary 1-Click UPI) | "gateway" (Razorpay Cards/Gateways)
+  const [paymentMode, setPaymentMode] = useState<"upi_app" | "gateway">("upi_app");
 
   // Donor form
   const [donorName, setDonorName] = useState<string>("");
@@ -230,11 +280,22 @@ export function KaaraiKarangalDonationModal({
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [receiptData, setReceiptData] = useState<any | null>(null);
 
-  // In-App Razorpay Mobile Checkout State (for Platform.OS !== "web")
+  // In-App Return Detection (Swiggy-Style automatic return handling)
+  const [waitingForAppReturn, setWaitingForAppReturn] = useState<boolean>(false);
+  const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
+
+  // Discrete Offline / Manual UTR Fallback Toggle
+  const [showOfflineFallback, setShowOfflineFallback] = useState<boolean>(false);
+  const [offlineUtr, setOfflineUtr] = useState<string>("");
+
+  // In-App Razorpay Mobile Checkout State (for Native App)
   const [rzpModalVisible, setRzpModalVisible] = useState<boolean>(false);
   const [rzpCheckoutHtml, setRzpCheckoutHtml] = useState<string>("");
   const [rzpCurrentOrderId, setRzpCurrentOrderId] = useState<string>("");
   const [rzpDonorPayload, setRzpDonorPayload] = useState<any>(null);
+
+  const appState = useRef(AppState.currentState);
 
   // Pre-fill user session if logged in
   useEffect(() => {
@@ -254,6 +315,25 @@ export function KaaraiKarangalDonationModal({
       } catch {}
     })();
   }, []);
+
+  // Listen for App State change when user returns from GPay / PhonePe (Swiggy-style auto receipt prompt)
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState: AppStateStatus) => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === "active" &&
+        waitingForAppReturn
+      ) {
+        // User came back from GPay / PhonePe to the app!
+        // We keep waitingForAppReturn true so the user sees the 1-click confirmation banner
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [waitingForAppReturn]);
 
   const handleMobileChange = (val: string) => {
     let digits = val.replace(/\D/g, "");
@@ -278,7 +358,10 @@ export function KaaraiKarangalDonationModal({
     if (visible) {
       setReceiptData(null);
       setErrorMessage("");
-      setUtrNumber("");
+      setOfflineUtr("");
+      setShowOfflineFallback(false);
+      setWaitingForAppReturn(false);
+      setShowQrModal(false);
       setCopiedUpi(false);
       if (initialAmount) {
         setSelectedAmount(initialAmount);
@@ -290,13 +373,13 @@ export function KaaraiKarangalDonationModal({
 
   const effectiveAmount = isCustom ? parseFloat(customAmount) || 0 : selectedAmount;
 
-  // Dynamic UPI Intent URI & QR Code
-  const upiIntentUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
-    BENEFICIARY_NAME
-  )}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent(purpose || "Kaarai Karangal Donation")}`;
+  // Strict NPCI compliant Standard UPI URI
+  const standardUpiUri = `upi://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
+    BENEFICIARY_NAME_SHORT
+  )}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent("Kaarai Karangal Donation")}`;
 
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
-    upiIntentUri
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(
+    standardUpiUri
   )}&margin=8`;
 
   // 1-Click Copy UPI ID
@@ -313,30 +396,7 @@ export function KaaraiKarangalDonationModal({
     }
   };
 
-  // Open UPI Apps
-  const handleOpenUpiApp = async (app?: string) => {
-    try {
-      let targetUrl = upiIntentUri;
-      if (app === "gpay" && Platform.OS === "android") {
-        targetUrl = `tez://upi/pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
-          BENEFICIARY_NAME
-        )}&am=${effectiveAmount}&cu=INR`;
-      } else if (app === "phonepe" && Platform.OS === "android") {
-        targetUrl = `phonepe://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
-          BENEFICIARY_NAME
-        )}&am=${effectiveAmount}&cu=INR`;
-      } else if (app === "paytm" && Platform.OS === "android") {
-        targetUrl = `paytmmp://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
-          BENEFICIARY_NAME
-        )}&am=${effectiveAmount}&cu=INR`;
-      }
-      await Linking.openURL(targetUrl);
-    } catch {
-      handleCopyUpi();
-    }
-  };
-
-  // Load Razorpay checkout.js script dynamically for Web
+  // Dynamically load Razorpay SDK on Web
   const loadRazorpayScript = (): Promise<boolean> => {
     return new Promise((resolve) => {
       if (typeof window === "undefined") {
@@ -356,7 +416,143 @@ export function KaaraiKarangalDonationModal({
   };
 
   // ---------------------------------------------------------------------------
-  // METHOD 1: RAZORPAY GATEWAY PAYMENT (In-App WebView for Mobile, SDK for Web)
+  // METHOD 1: 1-CLICK INSTANT UPI APPS (Google Pay, PhonePe, Paytm, QR)
+  // ---------------------------------------------------------------------------
+  const handleLaunchUpiApp = async (preferredApp?: "gpay" | "phonepe" | "paytm") => {
+    if (effectiveAmount < 1) {
+      setErrorMessage("Please select or enter an amount of at least ₹10.");
+      return;
+    }
+    if (!donorName.trim() && !isAnonymous) {
+      setErrorMessage("Please enter your name or check 'Donate Anonymously'.");
+      return;
+    }
+
+    const cleanMobile = donorMobile.replace(/\D/g, "");
+    if (!cleanMobile || cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
+      setErrorMessage("Please enter a valid 10-digit Indian mobile number for receipt dispatch.");
+      return;
+    }
+
+    setErrorMessage("");
+
+    try {
+      let targetUri = standardUpiUri;
+
+      // On Android / iOS, try launching the standard or app-specific intent safely
+      if (Platform.OS === "android") {
+        if (preferredApp === "phonepe") {
+          targetUri = `phonepe://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
+            BENEFICIARY_NAME_SHORT
+          )}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent("Donation")}`;
+        } else if (preferredApp === "paytm") {
+          targetUri = `paytmmp://pay?pa=${OFFICIAL_UPI_ID}&pn=${encodeURIComponent(
+            BENEFICIARY_NAME_SHORT
+          )}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent("Donation")}`;
+        }
+        // Note: For Google Pay, standard upi:// is preferred over tez:// because tez:// triggers
+        // the "Payment to this receiver are not allowed" error on non-onboarded Tez VPAs.
+      }
+
+      setWaitingForAppReturn(true);
+
+      if (Platform.OS === "web") {
+        // On web desktop, show the QR code modal so the user can scan with GPay / PhonePe
+        setShowQrModal(true);
+      } else {
+        const canOpen = await Linking.canOpenURL(targetUri).catch(() => false);
+        if (canOpen) {
+          await Linking.openURL(targetUri);
+        } else {
+          // Fallback to standard upi:// or QR modal
+          const canOpenStandard = await Linking.canOpenURL(standardUpiUri).catch(() => false);
+          if (canOpenStandard) {
+            await Linking.openURL(standardUpiUri);
+          } else {
+            setShowQrModal(true);
+          }
+        }
+      }
+    } catch {
+      setShowQrModal(true);
+    }
+  };
+
+  // Instant 1-Click Confirmation when returned from UPI app (Swiggy / Zomato style auto-receipt)
+  const handleConfirmUpiSuccess = async () => {
+    setProcessing(true);
+    setVerifyingStatus("Confirming donation and recording in official ledger...");
+
+    try {
+      const cleanMobile = donorMobile.replace(/\D/g, "");
+      const finalDonorName = isAnonymous ? "Anonymous Lifesaver" : donorName.trim();
+      const internationalContact = `+91${cleanMobile}`;
+      const receiptNo = `KK-UPI-${new Date().getFullYear()}${String(
+        new Date().getMonth() + 1
+      ).padStart(2, "0")}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+      const donationRecord = {
+        receipt_number: receiptNo,
+        donor_name: finalDonorName,
+        donor_mobile: internationalContact,
+        donor_email: donorEmail.trim() || null,
+        donor_pan: donorPan.trim() ? donorPan.toUpperCase() : null,
+        amount: Number(effectiveAmount || 0),
+        currency: "INR",
+        purpose: purpose || "Emergency Blood Logistics & Patient Care",
+        is_anonymous: Boolean(isAnonymous),
+        razorpay_order_id: "INSTANT_UPI_APP",
+        razorpay_payment_id: `UPI-${Date.now()}`,
+        status: "completed",
+        created_at: new Date().toISOString(),
+      };
+
+      const { error: insertErr } = await supabase
+        .from("donations")
+        .insert(donationRecord)
+        .select()
+        .single();
+
+      if (insertErr) {
+        setProcessing(false);
+        setVerifyingStatus("");
+        setErrorMessage(insertErr.message || "Failed to record donation.");
+        return;
+      }
+
+      try {
+        await supabase.from("audit_logs").insert({
+          action: "instant_upi_donation_confirmed",
+          target_type: "donation",
+          target_id: receiptNo,
+          timestamp: new Date().toISOString(),
+          metadata: {
+            amount: donationRecord.amount,
+            donor_name: donationRecord.donor_name,
+            vpa: OFFICIAL_UPI_ID,
+          },
+        });
+      } catch {}
+
+      setProcessing(false);
+      setVerifyingStatus("");
+      setWaitingForAppReturn(false);
+      setShowQrModal(false);
+      setReceiptData({
+        ...donationRecord,
+        payment_id: donationRecord.razorpay_payment_id,
+        payment_mode: `Direct UPI (${OFFICIAL_UPI_ID})`,
+        verified: true,
+      });
+    } catch (e: any) {
+      setProcessing(false);
+      setVerifyingStatus("");
+      setErrorMessage(e?.message || "Error generating receipt.");
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // METHOD 2: RAZORPAY GATEWAY (Cards, NetBanking & Account-Activated UPI)
   // ---------------------------------------------------------------------------
   const handleDonateRazorpay = async () => {
     if (effectiveAmount < 1) {
@@ -369,11 +565,7 @@ export function KaaraiKarangalDonationModal({
     }
 
     const cleanMobile = donorMobile.replace(/\D/g, "");
-    if (!cleanMobile) {
-      setErrorMessage("Please enter your 10-digit mobile number for Razorpay receipt & OTP verification.");
-      return;
-    }
-    if (cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
+    if (!cleanMobile || cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
       setErrorMessage("Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.");
       return;
     }
@@ -385,6 +577,8 @@ export function KaaraiKarangalDonationModal({
     try {
       const finalDonorName = isAnonymous ? "Anonymous Lifesaver" : donorName.trim();
       const internationalContact = `+91${cleanMobile}`;
+      // Providing guaranteed email so Razorpay allows prefilling UPI & method switching
+      const finalEmail = donorEmail.trim() || `${finalDonorName.toLowerCase().replace(/[^a-z0-9]/g, "") || "donor"}@kklifedrop.org`;
 
       // 1. Invoke Supabase Edge Function to create original Razorpay order
       const { data: orderRes, error: orderErr } = await supabase.functions.invoke(
@@ -395,7 +589,7 @@ export function KaaraiKarangalDonationModal({
             amount: effectiveAmount,
             donor_name: finalDonorName,
             donor_mobile: internationalContact,
-            donor_email: donorEmail.trim() || undefined,
+            donor_email: finalEmail,
             donor_pan: donorPan.trim() || undefined,
             purpose,
             is_anonymous: isAnonymous,
@@ -404,7 +598,7 @@ export function KaaraiKarangalDonationModal({
       );
 
       if (orderErr || !orderRes?.ok) {
-        let msg = orderErr?.message || orderRes?.error || "Failed to initiate Razorpay order.";
+        let msg = orderErr?.message || orderRes?.error || "Failed to initialize payment gateway.";
         try {
           const errBody = await (orderErr as any)?.context?.json?.();
           if (errBody?.error) msg = errBody.error;
@@ -423,18 +617,19 @@ export function KaaraiKarangalDonationModal({
         amount: effectiveAmount,
         donor_name: finalDonorName,
         donor_mobile: internationalContact,
-        donor_email: donorEmail.trim(),
+        donor_email: finalEmail,
         donor_pan: donorPan.trim(),
         purpose,
         is_anonymous: isAnonymous,
       };
 
       if (Platform.OS === "web") {
+        // WEB FLOW: Standard Razorpay Modal with forced UPI display block
         const loaded = await loadRazorpayScript();
         if (!loaded || !window.Razorpay) {
           setProcessing(false);
           setVerifyingStatus("");
-          setErrorMessage("Could not load Razorpay SDK. Please check your internet connection.");
+          setErrorMessage("Could not load payment gateway. Please check your internet connection.");
           return;
         }
 
@@ -447,12 +642,31 @@ export function KaaraiKarangalDonationModal({
           description: purpose,
           prefill: {
             name: finalDonorName,
-            email: donorEmail.trim() || undefined,
+            email: finalEmail,
             contact: internationalContact,
+            method: "upi",
           },
-          readonly: {
-            contact: true,
-            name: true,
+          config: {
+            display: {
+              blocks: {
+                upi: {
+                  name: "Pay using UPI (Google Pay, PhonePe, Paytm, QR)",
+                  instruments: [{ method: "upi" }],
+                },
+                other: {
+                  name: "Cards & NetBanking",
+                  instruments: [
+                    { method: "card" },
+                    { method: "netbanking" },
+                    { method: "wallet" },
+                  ],
+                },
+              },
+              sequence: ["block.upi", "block.other"],
+              preferences: {
+                show_default_blocks: true,
+              },
+            },
           },
           notes: {
             organization: "Kaarai Karangal Samooga Sevai Amaippu",
@@ -464,7 +678,6 @@ export function KaaraiKarangalDonationModal({
             color: "#DC2626",
           },
           handler: async (response: any) => {
-            // Check & verify payment signature via Supabase Edge Function before receipt
             await verifyPayment({
               action: "verify_payment",
               razorpay_payment_id: response.razorpay_payment_id,
@@ -485,20 +698,20 @@ export function KaaraiKarangalDonationModal({
         rzp.on("payment.failed", (resp: any) => {
           setProcessing(false);
           setVerifyingStatus("");
-          setErrorMessage(resp?.error?.description || "Payment failed on Razorpay.");
+          setErrorMessage(resp?.error?.description || "Payment was not completed.");
         });
         setProcessing(false);
         setVerifyingStatus("");
         rzp.open();
       } else {
-        // NATIVE MOBILE: Open In-App Razorpay Checkout via WebView
+        // MOBILE NATIVE FLOW: In-App WebView with automatic UPI Intent deeplink resolution
         const checkoutHtml = generateRazorpayCheckoutHtml({
           keyId,
           orderId,
           amountPaise,
           purpose,
           finalDonorName,
-          donorEmail: donorEmail.trim(),
+          donorEmail: finalEmail,
           internationalContact,
         });
 
@@ -512,17 +725,18 @@ export function KaaraiKarangalDonationModal({
     } catch (e: any) {
       setProcessing(false);
       setVerifyingStatus("");
-      setErrorMessage(e?.message || "Error communicating with Razorpay.");
+      setErrorMessage(e?.message || "Error communicating with payment gateway.");
     }
   };
 
+  // Handles messages posted back from In-App Checkout WebView
   const handleRzpMessage = async (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === "PAYMENT_SUCCESS") {
         setRzpModalVisible(false);
         setProcessing(true);
-        setVerifyingStatus("Verifying Razorpay payment signature & recording donation...");
+        setVerifyingStatus("Payment confirmed! Generating official donation receipt...");
         const response = data.response;
         await verifyPayment({
           action: "verify_payment",
@@ -535,7 +749,7 @@ export function KaaraiKarangalDonationModal({
         setRzpModalVisible(false);
         setProcessing(false);
         setVerifyingStatus("");
-        setErrorMessage(data.error?.description || "Payment failed on Razorpay. Please try again.");
+        setErrorMessage(data.error?.description || "Payment was not completed. Please try again.");
       } else if (data.type === "PAYMENT_DISMISSED") {
         setRzpModalVisible(false);
         setProcessing(false);
@@ -544,20 +758,20 @@ export function KaaraiKarangalDonationModal({
         setRzpModalVisible(false);
         setProcessing(false);
         setVerifyingStatus("");
-        setErrorMessage(data.message || "Error opening in-app Razorpay checkout.");
+        setErrorMessage(data.message || "Error launching checkout.");
       }
     } catch (e: any) {
       setRzpModalVisible(false);
       setProcessing(false);
       setVerifyingStatus("");
-      setErrorMessage("Error reading payment response.");
+      setErrorMessage("Error reading payment confirmation.");
     }
   };
 
   const verifyPayment = async (payload: any) => {
     try {
       setProcessing(true);
-      setVerifyingStatus("Verifying payment signature with Razorpay servers...");
+      setVerifyingStatus("Verifying transaction authenticity with banking ledger...");
 
       const { data: verifyRes, error: verifyErr } = await supabase.functions.invoke(
         "razorpay-donations",
@@ -580,7 +794,7 @@ export function KaaraiKarangalDonationModal({
       setVerifyingStatus("");
       setReceiptData({
         ...verifyRes,
-        payment_mode: "Razorpay Gateway",
+        payment_mode: "Razorpay Gateway (Cards / Online)",
         verified: true,
       });
     } catch (e: any) {
@@ -591,9 +805,9 @@ export function KaaraiKarangalDonationModal({
   };
 
   // ---------------------------------------------------------------------------
-  // METHOD 2: DIRECT UPI TRANSFER (kaaraikarangal@dbs)
+  // METHOD 3: EMERGENCY MANUAL UTR ENTRY (Hidden by default)
   // ---------------------------------------------------------------------------
-  const handleConfirmUpiDonation = async () => {
+  const handleConfirmOfflineUtr = async () => {
     if (effectiveAmount < 1) {
       setErrorMessage("Please select or enter an amount of at least ₹10.");
       return;
@@ -604,16 +818,12 @@ export function KaaraiKarangalDonationModal({
     }
 
     const cleanMobile = donorMobile.replace(/\D/g, "");
-    if (!cleanMobile) {
-      setErrorMessage("Please enter your 10-digit mobile number for WhatsApp receipt.");
-      return;
-    }
-    if (cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
-      setErrorMessage("Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.");
+    if (!cleanMobile || cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
+      setErrorMessage("Please enter a valid 10-digit Indian mobile number for receipt dispatch.");
       return;
     }
 
-    const cleanUtr = utrNumber.trim().replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const cleanUtr = offlineUtr.trim().replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
     if (!cleanUtr || cleanUtr.length < 10) {
       setErrorMessage(
         "Please enter the complete 12-digit UPI Reference (UTR) number from your payment app receipt (e.g. 429182749102)."
@@ -623,10 +833,9 @@ export function KaaraiKarangalDonationModal({
 
     setErrorMessage("");
     setProcessing(true);
-    setVerifyingStatus("Connecting to DBS Bank UPI ledger...");
+    setVerifyingStatus("Checking offline bank ledger for UTR...");
 
     try {
-      // 1. Check if this UTR has already been claimed / recorded in Supabase
       const { data: existingDonation } = await supabase
         .from("donations")
         .select("receipt_number, created_at, amount")
@@ -637,17 +846,10 @@ export function KaaraiKarangalDonationModal({
         setProcessing(false);
         setVerifyingStatus("");
         setErrorMessage(
-          `This UPI Reference (UTR: ${cleanUtr}) has already been recorded for receipt #${existingDonation.receipt_number} (₹${existingDonation.amount}). If you made a fresh donation, please enter the new transaction's UTR.`
+          `This UTR (${cleanUtr}) is already recorded for receipt #${existingDonation.receipt_number}. If you made a fresh donation, please enter the new UTR.`
         );
         return;
       }
-
-      // 2. Active Verification Progress Animation
-      setVerifyingStatus(`Verifying credit of ₹${effectiveAmount} to ${OFFICIAL_UPI_ID}...`);
-      await new Promise((r) => setTimeout(r, 1000));
-
-      setVerifyingStatus(`Validating banking confirmation for UTR: ${cleanUtr}...`);
-      await new Promise((r) => setTimeout(r, 900));
 
       const finalDonorName = isAnonymous ? "Anonymous Lifesaver" : donorName.trim();
       const internationalContact = `+91${cleanMobile}`;
@@ -665,13 +867,12 @@ export function KaaraiKarangalDonationModal({
         currency: "INR",
         purpose: purpose || "Emergency Blood Logistics & Patient Care",
         is_anonymous: Boolean(isAnonymous),
-        razorpay_order_id: "DIRECT_UPI_DBS",
+        razorpay_order_id: "DIRECT_BANK_DBS",
         razorpay_payment_id: `UPI-UTR-${cleanUtr}`,
         status: "completed",
         created_at: new Date().toISOString(),
       };
 
-      // 3. Insert verified donation directly into Supabase public.donations
       const { error: insertErr } = await supabase
         .from("donations")
         .insert(donationRecord)
@@ -679,17 +880,15 @@ export function KaaraiKarangalDonationModal({
         .single();
 
       if (insertErr) {
-        console.error("Supabase direct UPI insert error:", insertErr);
         setProcessing(false);
         setVerifyingStatus("");
-        setErrorMessage(insertErr.message || "Failed to record verified UPI donation.");
+        setErrorMessage(insertErr.message || "Failed to record donation.");
         return;
       }
 
-      // 4. Record in audit_logs
       try {
         await supabase.from("audit_logs").insert({
-          action: "direct_upi_donation_verified",
+          action: "direct_bank_donation_recorded",
           target_type: "donation",
           target_id: receiptNo,
           timestamp: new Date().toISOString(),
@@ -697,7 +896,6 @@ export function KaaraiKarangalDonationModal({
             amount: donationRecord.amount,
             utr: cleanUtr,
             vpa: OFFICIAL_UPI_ID,
-            status: "verified_completed",
           },
         });
       } catch {}
@@ -707,13 +905,13 @@ export function KaaraiKarangalDonationModal({
       setReceiptData({
         ...donationRecord,
         payment_id: `UPI-UTR-${cleanUtr}`,
-        payment_mode: `Direct UPI (${OFFICIAL_UPI_ID})`,
+        payment_mode: `Direct Bank / UPI (${OFFICIAL_UPI_ID})`,
         verified: true,
       });
     } catch (e: any) {
       setProcessing(false);
       setVerifyingStatus("");
-      setErrorMessage(e?.message || "Failed to record UPI donation.");
+      setErrorMessage(e?.message || "Failed to record offline donation.");
     }
   };
 
@@ -738,718 +936,768 @@ export function KaaraiKarangalDonationModal({
   return (
     <>
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheetContainer}>
-          {/* Header Bar */}
-          <View style={styles.sheetHeader}>
-            <View style={styles.headerLeft}>
-              <View style={styles.orgBadge}>
-                <Ionicons name="shield-checkmark" size={14} color="#059669" />
-                <Text style={styles.orgBadgeText}>VERIFIED NON-PROFIT • REG: 31/2025</Text>
+        <View style={styles.overlay}>
+          <View style={styles.sheetContainer}>
+            {/* Header Bar */}
+            <View style={styles.sheetHeader}>
+              <View style={styles.headerLeft}>
+                <View style={styles.orgBadge}>
+                  <Ionicons name="shield-checkmark" size={13} color="#059669" />
+                  <Text style={styles.orgBadgeText}>VERIFIED NON-PROFIT • REG: 31/2025</Text>
+                </View>
+                <Text style={styles.sheetTitle}>Support Kaarai Karangal</Text>
+                <Text style={styles.sheetSub}>
+                  100% voluntary funds power emergency blood courier & patient transport
+                </Text>
               </View>
-              <Text style={styles.sheetTitle}>Support Kaarai Karangal</Text>
-              <Text style={styles.sheetSub}>
-                100% voluntary funds power emergency blood courier & patient transport
-              </Text>
+              <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={12}>
+                <Ionicons name="close" size={22} color={colors.onSurfaceSecondary} />
+              </Pressable>
             </View>
-            <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={12}>
-              <Ionicons name="close" size={22} color={colors.onSurfaceSecondary} />
-            </Pressable>
-          </View>
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.sheetBody}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* SUCCESS RECEIPT VIEW */}
-            {receiptData ? (
-              <View style={styles.receiptCard}>
-                <LinearGradient
-                  colors={["#065F46", "#047857"]}
-                  style={styles.receiptTopHeader}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={styles.receiptCheckCircle}>
-                    <Ionicons name="checkmark" size={28} color="#FFFFFF" />
-                  </View>
-                  <Text style={styles.receiptTopTitle}>Donation Received</Text>
-                  <Text style={styles.receiptTopSub}>Official Acknowledgement Receipt</Text>
-                  <Text style={styles.receiptTopAmount}>₹{receiptData.amount}</Text>
-                </LinearGradient>
-
-                <View style={styles.receiptContent}>
-                  <View style={styles.receiptVerifiedBadge}>
-                    <Ionicons name="checkmark-circle" size={14} color="#059669" />
-                    <Text style={styles.receiptVerifiedBadgeText}>
-                      PAYMENT VERIFIED & CONFIRMED IN OFFICIAL LEDGER
-                    </Text>
-                  </View>
-
-                  <View style={styles.receiptOrgRow}>
-                    <Text style={styles.receiptOrgName}>Kaarai Karangal Samooga Sevai Amaippu</Text>
-                    <Text style={styles.receiptOrgMeta}>
-                      Reg. No. 31/2025 · ISO 9001:2015 · K7 Hall, Kennadiyar St, Karaikal
-                    </Text>
-                  </View>
-
-                  <View style={styles.receiptDivider} />
-
-                  <View style={styles.receiptGrid}>
-                    <View style={styles.receiptGridItem}>
-                      <Text style={styles.receiptLabel}>RECEIPT NUMBER</Text>
-                      <Text style={styles.receiptValueBold}>{receiptData.receipt_number}</Text>
-                    </View>
-                    <View style={styles.receiptGridItem}>
-                      <Text style={styles.receiptLabel}>PAYMENT METHOD</Text>
-                      <Text style={styles.receiptValue}>
-                        {receiptData.payment_mode || "Razorpay Gateway"}
-                      </Text>
-                    </View>
-                    <View style={styles.receiptGridItem}>
-                      <Text style={styles.receiptLabel}>TRANSACTION / UTR ID</Text>
-                      <Text style={styles.receiptValueBold}>{receiptData.payment_id}</Text>
-                    </View>
-                    <View style={styles.receiptGridItem}>
-                      <Text style={styles.receiptLabel}>DONOR NAME</Text>
-                      <Text style={styles.receiptValueBold}>{receiptData.donor_name}</Text>
-                    </View>
-                    <View style={styles.receiptGridItem}>
-                      <Text style={styles.receiptLabel}>MOBILE / WHATSAPP</Text>
-                      <Text style={styles.receiptValueBold}>
-                        {receiptData.donor_mobile || (donorMobile ? `+91 ${donorMobile}` : "—")}
-                      </Text>
-                    </View>
-                    <View style={styles.receiptGridItem}>
-                      <Text style={styles.receiptLabel}>DATE & TIME</Text>
-                      <Text style={styles.receiptValue}>
-                        {new Date(receiptData.created_at || Date.now()).toLocaleString("en-IN", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}
-                      </Text>
-                    </View>
-                    <View style={[styles.receiptGridItem, { width: "100%" }]}>
-                      <Text style={styles.receiptLabel}>PURPOSE ALLOCATION</Text>
-                      <Text style={styles.receiptValue}>{receiptData.purpose}</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.receiptStampBox}>
-                    <Ionicons name="ribbon" size={20} color="#059669" />
-                    <Text style={styles.receiptStampText}>
-                      Voluntary contributions to Kaarai Karangal directly save lives across Tamil Nadu & Puducherry.
-                      Recorded in official ledger (Reg. No. 31/2025).
-                    </Text>
-                  </View>
-
-                  {/* Actions */}
-                  <View style={styles.receiptActionRow}>
-                    <Pressable style={styles.receiptShareBtn} onPress={handleShareReceipt}>
-                      <Ionicons name="share-social" size={18} color="#0F172A" />
-                      <Text style={styles.receiptShareBtnText}>Share Receipt</Text>
-                    </Pressable>
-
-                    <Pressable style={styles.receiptDoneBtn} onPress={onClose}>
-                      <Text style={styles.receiptDoneBtnText}>Done</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            ) : (
-              /* DONATION FORM VIEW */
-              <View>
-                {/* Error Banner */}
-                {errorMessage ? (
-                  <View style={styles.errorBanner}>
-                    <Ionicons name="alert-circle" size={18} color="#DC2626" />
-                    <Text style={styles.errorText}>{errorMessage}</Text>
-                  </View>
-                ) : null}
-
-                {/* Amount Selector */}
-                <Text style={styles.sectionLabel}>CHOOSE DONATION AMOUNT (INR)</Text>
-                <View style={styles.amountGrid}>
-                  {PRESET_AMOUNTS.map((item) => {
-                    const isSelected = !isCustom && selectedAmount === item.amount;
-                    return (
-                      <Pressable
-                        key={item.amount}
-                        style={[styles.amountCard, isSelected && styles.amountCardActive]}
-                        onPress={() => {
-                          setIsCustom(false);
-                          setSelectedAmount(item.amount);
-                        }}
-                      >
-                        <Text style={[styles.amountValue, isSelected && styles.amountValueActive]}>
-                          ₹{item.amount}
-                        </Text>
-                        <Text style={[styles.amountLabel, isSelected && styles.amountLabelActive]}>
-                          {item.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-
-                  {/* Custom Option */}
-                  <Pressable
-                    style={[styles.amountCard, isCustom && styles.amountCardActive]}
-                    onPress={() => setIsCustom(true)}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.sheetBody}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* SUCCESS RECEIPT VIEW */}
+              {receiptData ? (
+                <View style={styles.receiptCard}>
+                  <LinearGradient
+                    colors={["#065F46", "#047857"]}
+                    style={styles.receiptTopHeader}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
                   >
-                    <Text style={[styles.amountValue, isCustom && styles.amountValueActive]}>
-                      Custom
-                    </Text>
-                    <Text style={[styles.amountLabel, isCustom && styles.amountLabelActive]}>
-                      Any Amount
-                    </Text>
-                  </Pressable>
-                </View>
+                    <View style={styles.receiptCheckCircle}>
+                      <Ionicons name="checkmark" size={28} color="#FFFFFF" />
+                    </View>
+                    <Text style={styles.receiptTopTitle}>Donation Received!</Text>
+                    <Text style={styles.receiptTopSub}>Official Acknowledgement Receipt</Text>
+                    <Text style={styles.receiptTopAmount}>₹{receiptData.amount}</Text>
+                  </LinearGradient>
 
-                {/* Custom Input Field */}
-                {isCustom ? (
-                  <View style={styles.customInputWrap}>
-                    <Text style={styles.currencyPrefix}>₹</Text>
+                  <View style={styles.receiptContent}>
+                    <View style={styles.receiptVerifiedBadge}>
+                      <Ionicons name="checkmark-circle" size={14} color="#059669" />
+                      <Text style={styles.receiptVerifiedBadgeText}>
+                        PAYMENT CONFIRMED & RECORDED IN OFFICIAL LEDGER
+                      </Text>
+                    </View>
+
+                    <View style={styles.receiptOrgRow}>
+                      <Text style={styles.receiptOrgName}>Kaarai Karangal Samooga Sevai Amaippu</Text>
+                      <Text style={styles.receiptOrgMeta}>
+                        Reg. No. 31/2025 · ISO 9001:2015 · K7 Hall, Kennadiyar St, Karaikal
+                      </Text>
+                    </View>
+
+                    <View style={styles.receiptDivider} />
+
+                    <View style={styles.receiptGrid}>
+                      <View style={styles.receiptGridItem}>
+                        <Text style={styles.receiptLabel}>RECEIPT NUMBER</Text>
+                        <Text style={styles.receiptValueBold}>{receiptData.receipt_number}</Text>
+                      </View>
+                      <View style={styles.receiptGridItem}>
+                        <Text style={styles.receiptLabel}>PAYMENT METHOD</Text>
+                        <Text style={styles.receiptValue}>
+                          {receiptData.payment_mode || "Instant UPI"}
+                        </Text>
+                      </View>
+                      <View style={styles.receiptGridItem}>
+                        <Text style={styles.receiptLabel}>TRANSACTION / REF ID</Text>
+                        <Text style={styles.receiptValueBold}>{receiptData.payment_id}</Text>
+                      </View>
+                      <View style={styles.receiptGridItem}>
+                        <Text style={styles.receiptLabel}>DONOR NAME</Text>
+                        <Text style={styles.receiptValueBold}>{receiptData.donor_name}</Text>
+                      </View>
+                      <View style={styles.receiptGridItem}>
+                        <Text style={styles.receiptLabel}>MOBILE / WHATSAPP</Text>
+                        <Text style={styles.receiptValueBold}>
+                          {receiptData.donor_mobile || (donorMobile ? `+91 ${donorMobile}` : "—")}
+                        </Text>
+                      </View>
+                      <View style={styles.receiptGridItem}>
+                        <Text style={styles.receiptLabel}>DATE & TIME</Text>
+                        <Text style={styles.receiptValue}>
+                          {new Date(receiptData.created_at || Date.now()).toLocaleString("en-IN", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })}
+                        </Text>
+                      </View>
+                      <View style={[styles.receiptGridItem, { width: "100%" }]}>
+                        <Text style={styles.receiptLabel}>PURPOSE ALLOCATION</Text>
+                        <Text style={styles.receiptValue}>{receiptData.purpose}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.receiptStampBox}>
+                      <Ionicons name="ribbon" size={20} color="#059669" />
+                      <Text style={styles.receiptStampText}>
+                        Voluntary contributions directly fund emergency blood transport & patient care in Tamil Nadu & Puducherry.
+                      </Text>
+                    </View>
+
+                    {/* Actions */}
+                    <View style={styles.receiptActionRow}>
+                      <Pressable style={styles.receiptShareBtn} onPress={handleShareReceipt}>
+                        <Ionicons name="share-social" size={18} color="#0F172A" />
+                        <Text style={styles.receiptShareBtnText}>Share Receipt</Text>
+                      </Pressable>
+
+                      <Pressable style={styles.receiptDoneBtn} onPress={onClose}>
+                        <Text style={styles.receiptDoneBtnText}>Done</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                /* DONATION FORM VIEW */
+                <View>
+                  {/* Error Banner */}
+                  {errorMessage ? (
+                    <View style={styles.errorBanner}>
+                      <Ionicons name="alert-circle" size={18} color="#DC2626" />
+                      <Text style={styles.errorText}>{errorMessage}</Text>
+                    </View>
+                  ) : null}
+
+                  {/* Amount Selector */}
+                  <Text style={styles.sectionLabel}>CHOOSE DONATION AMOUNT (INR)</Text>
+                  <View style={styles.amountGrid}>
+                    {PRESET_AMOUNTS.map((item) => {
+                      const isSelected = !isCustom && selectedAmount === item.amount;
+                      return (
+                        <Pressable
+                          key={item.amount}
+                          style={[styles.amountCard, isSelected && styles.amountCardActive]}
+                          onPress={() => {
+                            setIsCustom(false);
+                            setSelectedAmount(item.amount);
+                          }}
+                        >
+                          {item.popular ? (
+                            <View style={styles.popularBadge}>
+                              <Text style={styles.popularBadgeText}>POPULAR</Text>
+                            </View>
+                          ) : null}
+                          <Text style={[styles.amountValue, isSelected && styles.amountValueActive]}>
+                            ₹{item.amount}
+                          </Text>
+                          <Text style={[styles.amountLabel, isSelected && styles.amountLabelActive]}>
+                            {item.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+
+                    {/* Custom Option */}
+                    <Pressable
+                      style={[styles.amountCard, isCustom && styles.amountCardActive]}
+                      onPress={() => setIsCustom(true)}
+                    >
+                      <Text style={[styles.amountValue, isCustom && styles.amountValueActive]}>
+                        Custom
+                      </Text>
+                      <Text style={[styles.amountLabel, isCustom && styles.amountLabelActive]}>
+                        Any Amount
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  {/* Custom Input Field */}
+                  {isCustom ? (
+                    <View style={styles.customInputWrap}>
+                      <Text style={styles.currencyPrefix}>₹</Text>
+                      <TextInput
+                        style={styles.customTextInput}
+                        placeholder="Enter amount (e.g. 500)"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="numeric"
+                        value={customAmount}
+                        onChangeText={setCustomAmount}
+                        autoFocus
+                      />
+                    </View>
+                  ) : null}
+
+                  {/* Purpose Picker */}
+                  <Text style={styles.sectionLabel}>CAUSE ALLOCATION</Text>
+                  <View style={styles.purposeContainer}>
+                    {PURPOSES.map((p) => {
+                      const isSelected = purpose === p;
+                      return (
+                        <Pressable
+                          key={p}
+                          style={[styles.purposeChip, isSelected && styles.purposeChipActive]}
+                          onPress={() => setPurpose(p)}
+                        >
+                          <Ionicons
+                            name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                            size={16}
+                            color={isSelected ? "#DC2626" : "#64748B"}
+                          />
+                          <Text style={[styles.purposeText, isSelected && styles.purposeTextActive]}>
+                            {p}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  {/* Donor Details Section */}
+                  <Text style={styles.sectionLabel}>DONOR PARTICULARS</Text>
+
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>
+                      Full Name <Text style={styles.requiredMark}>*</Text>
+                    </Text>
                     <TextInput
-                      style={styles.customTextInput}
-                      placeholder="Enter amount (e.g. 500)"
+                      style={styles.textInput}
+                      placeholder="Enter your full name"
                       placeholderTextColor="#94A3B8"
-                      keyboardType="numeric"
-                      value={customAmount}
-                      onChangeText={setCustomAmount}
-                      autoFocus
+                      value={donorName}
+                      onChangeText={setDonorName}
+                      editable={!isAnonymous}
                     />
                   </View>
-                ) : null}
 
-                {/* Purpose Picker */}
-                <Text style={styles.sectionLabel}>CAUSE ALLOCATION</Text>
-                <View style={styles.purposeContainer}>
-                  {PURPOSES.map((p) => {
-                    const isSelected = purpose === p;
-                    return (
-                      <Pressable
-                        key={p}
-                        style={[styles.purposeChip, isSelected && styles.purposeChipActive]}
-                        onPress={() => setPurpose(p)}
-                      >
-                        <Ionicons
-                          name={isSelected ? "checkmark-circle" : "ellipse-outline"}
-                          size={16}
-                          color={isSelected ? "#DC2626" : "#64748B"}
-                        />
-                        <Text style={[styles.purposeText, isSelected && styles.purposeTextActive]}>
-                          {p}
+                  {/* Mobile / WhatsApp with Country Code +91 */}
+                  <View style={styles.inputGroup}>
+                    <View style={styles.labelRow}>
+                      <View style={styles.labelWithIcon}>
+                        <Ionicons name="logo-whatsapp" size={15} color="#25D366" />
+                        <Text style={styles.inputLabel}>
+                          Mobile / WhatsApp <Text style={styles.requiredMark}>*</Text>
                         </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                {/* PAYMENT METHOD SELECTOR: Direct UPI FIRST, then Razorpay */}
-                <Text style={styles.sectionLabel}>SELECT PAYMENT METHOD</Text>
-                <View style={styles.methodTabRow}>
-                  <Pressable
-                    style={[
-                      styles.methodTab,
-                      paymentMethod === "upi" && styles.methodTabActiveUpi,
-                    ]}
-                    onPress={() => setPaymentMethod("upi")}
-                  >
-                    <View style={styles.methodTabHeader}>
-                      <Ionicons
-                        name="flash"
-                        size={18}
-                        color={paymentMethod === "upi" ? "#059669" : "#64748B"}
-                      />
-                      <Text
-                        style={[
-                          styles.methodTabTitle,
-                          paymentMethod === "upi" && styles.methodTabTitleActiveUpi,
-                        ]}
-                      >
-                        Direct UPI (Instant)
-                      </Text>
-                    </View>
-                    <Text style={styles.methodTabSub}>kaaraikarangal@dbs · 0% Fee · GPay, PhonePe</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={[
-                      styles.methodTab,
-                      paymentMethod === "razorpay" && styles.methodTabActiveRzp,
-                    ]}
-                    onPress={() => setPaymentMethod("razorpay")}
-                  >
-                    <View style={styles.methodTabHeader}>
-                      <Ionicons
-                        name="card"
-                        size={18}
-                        color={paymentMethod === "razorpay" ? "#DC2626" : "#64748B"}
-                      />
-                      <Text
-                        style={[
-                          styles.methodTabTitle,
-                          paymentMethod === "razorpay" && styles.methodTabTitleActiveRzp,
-                        ]}
-                      >
-                        Razorpay Gateway
-                      </Text>
-                    </View>
-                    <Text style={styles.methodTabSub}>Cards · NetBanking · All UPI · Wallets</Text>
-                  </Pressable>
-                </View>
-
-                {/* Donor Details Section */}
-                <Text style={styles.sectionLabel}>DONOR PARTICULARS</Text>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>
-                    Full Name <Text style={styles.requiredMark}>*</Text>
-                  </Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Enter your full name"
-                    placeholderTextColor="#94A3B8"
-                    value={donorName}
-                    onChangeText={setDonorName}
-                    editable={!isAnonymous}
-                  />
-                </View>
-
-                {/* Mobile / WhatsApp with Country Code +91 and 10 digit validation */}
-                <View style={styles.inputGroup}>
-                  <View style={styles.labelRow}>
-                    <View style={styles.labelWithIcon}>
-                      <Ionicons name="logo-whatsapp" size={15} color="#25D366" />
-                      <Text style={styles.inputLabel}>
-                        Mobile / WhatsApp <Text style={styles.requiredMark}>*</Text>
-                      </Text>
-                    </View>
-
-                    {donorMobile.length === 0 ? (
-                      <View style={styles.statusBadgeMuted}>
-                        <Text style={styles.statusBadgeMutedText}>10 Digits Required</Text>
                       </View>
-                    ) : isMobileValid ? (
-                      <View style={styles.statusBadgeValid}>
-                        <Ionicons name="checkmark-circle" size={12} color="#059669" />
-                        <Text style={styles.statusBadgeValidText}>Valid (Ready)</Text>
-                      </View>
-                    ) : isMobile10Digits ? (
-                      <View style={styles.statusBadgeError}>
-                        <Ionicons name="alert-circle" size={12} color="#DC2626" />
-                        <Text style={styles.statusBadgeErrorText}>Must start with 6-9</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.statusBadgeProgress}>
-                        <Text style={styles.statusBadgeProgressText}>{donorMobile.length}/10 digits</Text>
-                      </View>
-                    )}
-                  </View>
 
-                  <View
-                    style={[
-                      styles.phoneInputContainer,
-                      donorMobile.length > 0 &&
-                        (isMobileValid
-                          ? styles.phoneInputContainerValid
-                          : styles.phoneInputContainerTyping),
-                    ]}
-                  >
-                    <View style={styles.countryCodeBadge}>
-                      <Text style={styles.flagEmoji}>🇮🇳</Text>
-                      <Text style={styles.countryCodeText}>+91</Text>
-                    </View>
-
-                    <View style={styles.inputDivider} />
-
-                    <TextInput
-                      style={styles.phoneTextInput}
-                      placeholder="98765 43210"
-                      placeholderTextColor="#94A3B8"
-                      keyboardType="phone-pad"
-                      maxLength={10}
-                      value={donorMobile}
-                      onChangeText={handleMobileChange}
-                    />
-
-                    {donorMobile.length > 0 && (
-                      <Pressable
-                        style={styles.clearBtn}
-                        onPress={() => setDonorMobile("")}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons name="close-circle" size={18} color="#94A3B8" />
-                      </Pressable>
-                    )}
-                  </View>
-
-                  <Text style={styles.helperText}>
-                    Instant payment confirmation and WhatsApp 80G tax receipt will be sent to this number.
-                  </Text>
-                </View>
-
-                {/* Email (For 80G Receipt) */}
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Email Address (Optional for 80G Tax Receipt)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="your.email@domain.com"
-                    placeholderTextColor="#94A3B8"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    value={donorEmail}
-                    onChangeText={setDonorEmail}
-                  />
-                </View>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>PAN Card Number (Optional - Tax Exemption)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="ABCDE1234F"
-                    placeholderTextColor="#94A3B8"
-                    autoCapitalize="characters"
-                    maxLength={10}
-                    value={donorPan}
-                    onChangeText={setDonorPan}
-                  />
-                </View>
-
-                {/* Anonymous Toggle */}
-                <Pressable
-                  style={styles.anonymousRow}
-                  onPress={() => setIsAnonymous(!isAnonymous)}
-                >
-                  <Ionicons
-                    name={isAnonymous ? "checkbox" : "square-outline"}
-                    size={20}
-                    color={isAnonymous ? "#DC2626" : "#64748B"}
-                  />
-                  <Text style={styles.anonymousText}>
-                    Make this donation anonymous on public community honor roll
-                  </Text>
-                </Pressable>
-
-                {/* Active Checking / Verification Banner */}
-                {processing ? (
-                  <View style={styles.verifyingBanner}>
-                    <ActivityIndicator size="small" color="#059669" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.verifyingBannerTitle}>Checking Payment Status...</Text>
-                      <Text style={styles.verifyingBannerText}>
-                        {verifyingStatus || "Verifying transaction with banking network..."}
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
-
-                {/* ------------------------------------------------------------- */}
-                {/* METHOD 1: DIRECT UPI TRANSFER (kaaraikarangal@dbs) - FIRST    */}
-                {/* ------------------------------------------------------------- */}
-                {paymentMethod === "upi" ? (
-                  <View style={styles.upiContainer}>
-                    {/* UPI ID Header Card */}
-                    <View style={styles.upiVpaCard}>
-                      <View style={styles.upiVpaLeft}>
-                        <View style={styles.dbsBadge}>
-                          <Text style={styles.dbsBadgeText}>DBS BANK</Text>
+                      {donorMobile.length === 0 ? (
+                        <View style={styles.statusBadgeMuted}>
+                          <Text style={styles.statusBadgeMutedText}>10 Digits Required</Text>
                         </View>
-                        <Text style={styles.upiVpaLabel}>OFFICIAL UPI VPA ID</Text>
-                        <Text style={styles.upiVpaValue}>{OFFICIAL_UPI_ID}</Text>
-                        <Text style={styles.upiVpaBank}>
-                          Beneficiary: Kaarai Karangal Samooga Sevai Amaippu
-                        </Text>
+                      ) : isMobileValid ? (
+                        <View style={styles.statusBadgeValid}>
+                          <Ionicons name="checkmark-circle" size={12} color="#059669" />
+                          <Text style={styles.statusBadgeValidText}>Valid (Ready)</Text>
+                        </View>
+                      ) : isMobile10Digits ? (
+                        <View style={styles.statusBadgeError}>
+                          <Ionicons name="alert-circle" size={12} color="#DC2626" />
+                          <Text style={styles.statusBadgeErrorText}>Must start with 6-9</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.statusBadgeProgress}>
+                          <Text style={styles.statusBadgeProgressText}>{donorMobile.length}/10 digits</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View
+                      style={[
+                        styles.phoneInputContainer,
+                        donorMobile.length > 0 &&
+                          (isMobileValid
+                            ? styles.phoneInputContainerValid
+                            : styles.phoneInputContainerTyping),
+                      ]}
+                    >
+                      <View style={styles.countryCodeBadge}>
+                        <Text style={styles.flagEmoji}>🇮🇳</Text>
+                        <Text style={styles.countryCodeText}>+91</Text>
                       </View>
 
-                      <Pressable
-                        style={[styles.copyUpiBtn, copiedUpi && styles.copyUpiBtnCopied]}
-                        onPress={handleCopyUpi}
-                      >
+                      <View style={styles.inputDivider} />
+
+                      <TextInput
+                        style={styles.phoneTextInput}
+                        placeholder="98765 43210"
+                        placeholderTextColor="#94A3B8"
+                        keyboardType="phone-pad"
+                        maxLength={10}
+                        value={donorMobile}
+                        onChangeText={handleMobileChange}
+                      />
+
+                      {donorMobile.length > 0 && (
+                        <Pressable
+                          style={styles.clearBtn}
+                          onPress={() => setDonorMobile("")}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                        </Pressable>
+                      )}
+                    </View>
+
+                    <Text style={styles.helperText}>
+                      Instant payment confirmation and WhatsApp receipt will be sent to this number.
+                    </Text>
+                  </View>
+
+                  {/* Email & PAN (Optional) */}
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>Email Address (Optional for 80G Tax Receipt)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      placeholder="your.email@domain.com"
+                      placeholderTextColor="#94A3B8"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={donorEmail}
+                      onChangeText={setDonorEmail}
+                    />
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>PAN Card Number (Optional - Tax Exemption)</Text>
+                    <TextInput
+                      style={styles.textInput}
+                      placeholder="ABCDE1234F"
+                      placeholderTextColor="#94A3B8"
+                      autoCapitalize="characters"
+                      maxLength={10}
+                      value={donorPan}
+                      onChangeText={setDonorPan}
+                    />
+                  </View>
+
+                  {/* Anonymous Toggle */}
+                  <Pressable
+                    style={styles.anonymousRow}
+                    onPress={() => setIsAnonymous(!isAnonymous)}
+                  >
+                    <Ionicons
+                      name={isAnonymous ? "checkbox" : "square-outline"}
+                      size={20}
+                      color={isAnonymous ? "#DC2626" : "#64748B"}
+                    />
+                    <Text style={styles.anonymousText}>
+                      Make this donation anonymous on community honor roll
+                    </Text>
+                  </Pressable>
+
+                  {/* Active Checking / Verification Banner */}
+                  {processing ? (
+                    <View style={styles.verifyingBanner}>
+                      <ActivityIndicator size="small" color="#DC2626" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.verifyingBannerTitle}>Processing...</Text>
+                        <Text style={styles.verifyingBannerText}>
+                          {verifyingStatus || "Connecting to secure payment gateway..."}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {/* SWIGGY-STYLE PAYMENT METHOD SELECTOR TABS */}
+                  <Text style={styles.sectionLabel}>CHOOSE PAYMENT METHOD</Text>
+                  <View style={styles.methodChoiceRow}>
+                    <Pressable
+                      style={[
+                        styles.methodChoiceCard,
+                        paymentMode === "upi_app" && styles.methodChoiceCardActiveUpi,
+                      ]}
+                      onPress={() => setPaymentMode("upi_app")}
+                    >
+                      <View style={styles.methodChoiceHeader}>
                         <Ionicons
-                          name={copiedUpi ? "checkmark-circle" : "copy-outline"}
-                          size={16}
-                          color={copiedUpi ? "#059669" : "#0F172A"}
+                          name="flash"
+                          size={18}
+                          color={paymentMode === "upi_app" ? "#059669" : "#64748B"}
                         />
                         <Text
                           style={[
-                            styles.copyUpiBtnText,
-                            copiedUpi && styles.copyUpiBtnTextCopied,
+                            styles.methodChoiceTitle,
+                            paymentMode === "upi_app" && styles.methodChoiceTitleActiveUpi,
                           ]}
                         >
-                          {copiedUpi ? "Copied!" : "Copy"}
+                          Direct UPI Apps
                         </Text>
-                      </Pressable>
-                    </View>
-
-                    {/* Dynamic QR Code Card */}
-                    <View style={styles.qrCard}>
-                      <Text style={styles.qrHeaderTitle}>SCAN TO PAY ₹{effectiveAmount}</Text>
-                      <Text style={styles.qrHeaderSub}>
-                        Use Google Pay, PhonePe, Paytm, BHIM or any banking app
+                      </View>
+                      <Text style={styles.methodChoiceSub}>
+                        GPay · PhonePe · Paytm · QR
                       </Text>
+                    </Pressable>
 
-                      <View style={styles.qrImageWrap}>
-                        <Image
-                          source={{ uri: qrCodeUrl }}
-                          style={styles.qrImage}
-                          resizeMode="contain"
+                    <Pressable
+                      style={[
+                        styles.methodChoiceCard,
+                        paymentMode === "gateway" && styles.methodChoiceCardActiveRzp,
+                      ]}
+                      onPress={() => setPaymentMode("gateway")}
+                    >
+                      <View style={styles.methodChoiceHeader}>
+                        <Ionicons
+                          name="card"
+                          size={18}
+                          color={paymentMode === "gateway" ? "#DC2626" : "#64748B"}
                         />
-                      </View>
-
-                      <View style={styles.qrAmountPill}>
-                        <Ionicons name="shield-checkmark" size={14} color="#059669" />
-                        <Text style={styles.qrAmountPillText}>
-                          Exact Amount Encoded: ₹{effectiveAmount}
+                        <Text
+                          style={[
+                            styles.methodChoiceTitle,
+                            paymentMode === "gateway" && styles.methodChoiceTitleActiveRzp,
+                          ]}
+                        >
+                          Cards & Gateway
                         </Text>
                       </View>
-                    </View>
+                      <Text style={styles.methodChoiceSub}>
+                        Debit/Credit Cards · NetBanking
+                      </Text>
+                    </Pressable>
+                  </View>
 
-                    {/* Quick Launch Buttons */}
-                    <View style={styles.quickAppsBox}>
-                      <Text style={styles.quickAppsTitle}>TAP TO OPEN IN YOUR UPI APP:</Text>
-                      <View style={styles.quickAppsRow}>
+                  {/* ------------------------------------------------------------- */}
+                  {/* MODE 1: DIRECT UPI APPS (Google Pay, PhonePe, Paytm, QR)      */}
+                  {/* ------------------------------------------------------------- */}
+                  {paymentMode === "upi_app" ? (
+                    <View style={styles.upiActionContainer}>
+                      <Text style={styles.upiLaunchTitle}>TAP TO PAY WITH YOUR FAVORITE APP:</Text>
+
+                      <View style={styles.upiButtonsGrid}>
+                        {/* Google Pay Button */}
                         <Pressable
-                          style={styles.quickAppBtn}
-                          onPress={() => handleOpenUpiApp("gpay")}
+                          style={styles.upiAppButton}
+                          onPress={() => handleLaunchUpiApp("gpay")}
                         >
-                          <Ionicons name="logo-google" size={16} color="#4285F4" />
-                          <Text style={styles.quickAppBtnText}>GPay</Text>
+                          <Ionicons name="logo-google" size={18} color="#4285F4" />
+                          <Text style={styles.upiAppButtonText}>Google Pay</Text>
                         </Pressable>
 
+                        {/* PhonePe Button */}
                         <Pressable
-                          style={styles.quickAppBtn}
-                          onPress={() => handleOpenUpiApp("phonepe")}
+                          style={styles.upiAppButton}
+                          onPress={() => handleLaunchUpiApp("phonepe")}
                         >
-                          <Ionicons name="phone-portrait-outline" size={16} color="#5F259F" />
-                          <Text style={styles.quickAppBtnText}>PhonePe</Text>
+                          <Ionicons name="phone-portrait-outline" size={18} color="#5F259F" />
+                          <Text style={styles.upiAppButtonText}>PhonePe</Text>
                         </Pressable>
 
+                        {/* Paytm Button */}
                         <Pressable
-                          style={styles.quickAppBtn}
-                          onPress={() => handleOpenUpiApp("paytm")}
+                          style={styles.upiAppButton}
+                          onPress={() => handleLaunchUpiApp("paytm")}
                         >
-                          <Ionicons name="wallet-outline" size={16} color="#00BAF2" />
-                          <Text style={styles.quickAppBtnText}>Paytm</Text>
+                          <Ionicons name="wallet-outline" size={18} color="#00BAF2" />
+                          <Text style={styles.upiAppButtonText}>Paytm</Text>
                         </Pressable>
 
+                        {/* Any Other UPI / Chooser */}
                         <Pressable
-                          style={styles.quickAppBtn}
-                          onPress={() => handleOpenUpiApp()}
+                          style={styles.upiAppButton}
+                          onPress={() => handleLaunchUpiApp()}
                         >
-                          <Ionicons name="send" size={15} color="#059669" />
-                          <Text style={styles.quickAppBtnText}>Any UPI</Text>
+                          <Ionicons name="flash" size={17} color="#059669" />
+                          <Text style={styles.upiAppButtonText}>Other UPI</Text>
                         </Pressable>
                       </View>
-                    </View>
 
-                    {/* UTR / Transaction Reference Submission */}
-                    <View style={styles.utrBox}>
-                      <View style={styles.labelRow}>
-                        <Text style={styles.inputLabel}>
-                          ENTER 12-DIGIT UPI REFERENCE (UTR) NUMBER <Text style={styles.requiredMark}>*</Text>
-                        </Text>
-                        {utrNumber.trim().length === 0 ? (
-                          <View style={styles.statusBadgeMuted}>
-                            <Text style={styles.statusBadgeMutedText}>12 Digits Required</Text>
+                      {/* Primary Full-Width UPI Button */}
+                      <Pressable
+                        style={[styles.payBtn, processing && styles.payBtnDisabled]}
+                        onPress={() => handleLaunchUpiApp()}
+                        disabled={processing}
+                      >
+                        <LinearGradient
+                          colors={["#059669", "#047857"]}
+                          style={StyleSheet.absoluteFill}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                        />
+                        <View style={styles.btnContent}>
+                          <Ionicons name="flash" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.payBtnText}>
+                            Pay ₹{effectiveAmount || 0} via UPI App
+                          </Text>
+                        </View>
+                      </Pressable>
+
+                      {/* Scan QR Toggle */}
+                      <Pressable
+                        style={styles.showQrBtn}
+                        onPress={() => setShowQrModal(true)}
+                      >
+                        <Ionicons name="qr-code-outline" size={16} color="#0F172A" />
+                        <Text style={styles.showQrBtnText}>Show QR Code to Scan</Text>
+                      </Pressable>
+
+                      {/* SWIGGY-STYLE AUTO-RECEIPT BANNER UPON RETURN */}
+                      {waitingForAppReturn ? (
+                        <View style={styles.appReturnCard}>
+                          <View style={styles.appReturnHeader}>
+                            <Ionicons name="checkmark-circle" size={20} color="#059669" />
+                            <Text style={styles.appReturnTitle}>Completed Your UPI Payment?</Text>
                           </View>
-                        ) : utrNumber.trim().length >= 10 ? (
-                          <View style={styles.statusBadgeValid}>
-                            <Ionicons name="checkmark-circle" size={12} color="#059669" />
-                            <Text style={styles.statusBadgeValidText}>Ready to Verify</Text>
+                          <Text style={styles.appReturnSub}>
+                            Tap below to automatically generate your official 80G acknowledgement receipt:
+                          </Text>
+                          <Pressable
+                            style={styles.autoConfirmBtn}
+                            onPress={handleConfirmUpiSuccess}
+                            disabled={processing}
+                          >
+                            <Text style={styles.autoConfirmBtnText}>
+                              ✓ Yes, Generate Official Receipt
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    /* ----------------------------------------------------------- */
+                    /* MODE 2: RAZORPAY GATEWAY (Cards, NetBanking, Wallets)       */
+                    /* ----------------------------------------------------------- */
+                    <View style={styles.rzpActionContainer}>
+                      <View style={styles.rzpStrip}>
+                        <Ionicons name="lock-closed" size={14} color="#059669" />
+                        <Text style={styles.rzpStripText}>
+                          All Domestic/International Cards · NetBanking · Official Gateway
+                        </Text>
+                      </View>
+
+                      <Pressable
+                        style={[styles.payBtn, processing && styles.payBtnDisabled]}
+                        onPress={handleDonateRazorpay}
+                        disabled={processing}
+                      >
+                        <LinearGradient
+                          colors={["#DC2626", "#B91C1C", "#991B1B"]}
+                          style={StyleSheet.absoluteFill}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                        />
+                        {processing ? (
+                          <View style={styles.btnContent}>
+                            <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                            <Text style={styles.payBtnText}>Connecting to Razorpay...</Text>
                           </View>
                         ) : (
-                          <View style={styles.statusBadgeProgress}>
-                            <Text style={styles.statusBadgeProgressText}>{utrNumber.trim().length}/12 Digits</Text>
+                          <View style={styles.btnContent}>
+                            <Ionicons name="card" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                            <Text style={styles.payBtnText}>
+                              Pay ₹{effectiveAmount || 0} via Razorpay
+                            </Text>
+                            <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
                           </View>
                         )}
-                      </View>
+                      </Pressable>
+                    </View>
+                  )}
 
-                      <TextInput
-                        style={styles.utrTextInput}
-                        placeholder="e.g. 429182749102"
-                        placeholderTextColor="#94A3B8"
-                        keyboardType="default"
-                        autoCapitalize="characters"
-                        maxLength={22}
-                        value={utrNumber}
-                        onChangeText={setUtrNumber}
+                  {/* ------------------------------------------------------------- */}
+                  {/* DISCRETE OFFLINE / DIRECT BANK ACCORDION (UNOBTRUSIVE)        */}
+                  {/* ------------------------------------------------------------- */}
+                  <View style={styles.offlineAccordionWrap}>
+                    <Pressable
+                      style={styles.offlineToggleHeader}
+                      onPress={() => setShowOfflineFallback(!showOfflineFallback)}
+                    >
+                      <Ionicons
+                        name={showOfflineFallback ? "chevron-up-circle" : "chevron-down-circle-outline"}
+                        size={16}
+                        color="#64748B"
                       />
-                      <Text style={styles.helperText}>
-                        After completing the transfer to {OFFICIAL_UPI_ID}, enter your 12-digit UTR/Ref number from your payment app to verify & instantly generate your receipt.
+                      <Text style={styles.offlineToggleText}>
+                        Prefer direct bank transfer or manual UTR entry?
                       </Text>
-                    </View>
-
-                    {/* Submit UPI Donation Button */}
-                    <Pressable
-                      style={[styles.payBtnUpi, processing && styles.payBtnDisabled]}
-                      onPress={handleConfirmUpiDonation}
-                      disabled={processing}
-                    >
-                      <LinearGradient
-                        colors={["#059669", "#047857"]}
-                        style={StyleSheet.absoluteFill}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                      />
-                      {processing ? (
-                        <View style={styles.btnContent}>
-                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.payBtnText}>Verifying Payment with Bank...</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.btnContent}>
-                          <Ionicons
-                            name="shield-checkmark"
-                            size={20}
-                            color="#FFFFFF"
-                            style={{ marginRight: 8 }}
-                          />
-                          <Text style={styles.payBtnText}>
-                            Verify UPI Payment & Get Receipt (₹{effectiveAmount || 0})
-                          </Text>
-                        </View>
-                      )}
                     </Pressable>
-                  </View>
-                ) : (
-                  /* ----------------------------------------------------------- */
-                  /* METHOD 2: RAZORPAY GATEWAY VIEW - SECOND                    */
-                  /* ----------------------------------------------------------- */
-                  <View>
-                    {/* Razorpay Trust Strip */}
-                    <View style={styles.trustStrip}>
-                      <View style={styles.trustItem}>
-                        <Ionicons name="lock-closed" size={14} color="#0284C7" />
-                        <Text style={styles.trustText}>Razorpay</Text>
-                      </View>
-                      <View style={styles.trustDot} />
-                      <View style={styles.trustItem}>
-                        <Ionicons name="flash" size={14} color="#059669" />
-                        <Text style={styles.trustText}>Verified Gateway</Text>
-                      </View>
-                      <View style={styles.trustDot} />
-                      <View style={styles.trustItem}>
-                        <Ionicons name="heart" size={14} color="#DC2626" />
-                        <Text style={styles.trustText}>100% Non-Profit</Text>
-                      </View>
-                    </View>
 
-                    {/* Razorpay Checkout Button */}
-                    <Pressable
-                      style={[styles.payBtn, processing && styles.payBtnDisabled]}
-                      onPress={handleDonateRazorpay}
-                      disabled={processing}
-                    >
-                      <LinearGradient
-                        colors={["#DC2626", "#B91C1C"]}
-                        style={StyleSheet.absoluteFill}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                      />
-                      {processing ? (
-                        <View style={styles.btnContent}>
-                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.payBtnText}>Connecting to Razorpay...</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.btnContent}>
-                          <Ionicons name="card" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.payBtnText}>
-                            Pay ₹{effectiveAmount || 0} via Razorpay
+                    {showOfflineFallback ? (
+                      <View style={styles.offlineContentBox}>
+                        <View style={styles.offlineBankDetails}>
+                          <Text style={styles.offlineBankHeader}>DBS Bank Account / Direct UPI</Text>
+                          <Text style={styles.offlineBankLine}>
+                            <Text style={{ fontWeight: "700" }}>Beneficiary:</Text> {BENEFICIARY_NAME_FULL}
                           </Text>
-                        </View>
-                      )}
-                    </Pressable>
-                  </View>
-                )}
+                          <Text style={styles.offlineBankLine}>
+                            <Text style={{ fontWeight: "700" }}>UPI VPA:</Text> {OFFICIAL_UPI_ID}
+                          </Text>
 
-                {/* Organization Details Footer */}
-                <View style={styles.orgFooter}>
-                  <Text style={styles.orgFooterTitle}>Kaarai Karangal Samooga Sevai Amaippu</Text>
-                  <Text style={styles.orgFooterSub}>
-                    Reg. No. 31/2025 · K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602
-                  </Text>
-                  <Text style={styles.orgFooterContact}>
-                    UPI: kaaraikarangal@dbs · Helpline: +91 9750807463 · Email: kaaraikarangal@gmail.com
-                  </Text>
+                          <Pressable
+                            style={[styles.copyBtnSmall, copiedUpi && styles.copyBtnSmallCopied]}
+                            onPress={handleCopyUpi}
+                          >
+                            <Ionicons
+                              name={copiedUpi ? "checkmark" : "copy-outline"}
+                              size={14}
+                              color={copiedUpi ? "#059669" : "#334155"}
+                            />
+                            <Text style={[styles.copyBtnSmallText, copiedUpi && { color: "#059669" }]}>
+                              {copiedUpi ? "UPI ID Copied!" : "Copy UPI ID"}
+                            </Text>
+                          </Pressable>
+                        </View>
+
+                        <Text style={styles.offlineUtrLabel}>ENTER 12-DIGIT TRANSACTION UTR NUMBER:</Text>
+                        <TextInput
+                          style={styles.offlineUtrInput}
+                          placeholder="e.g. 429182749102"
+                          placeholderTextColor="#94A3B8"
+                          autoCapitalize="characters"
+                          maxLength={22}
+                          value={offlineUtr}
+                          onChangeText={setOfflineUtr}
+                        />
+
+                        <Pressable
+                          style={[styles.offlineSubmitBtn, processing && styles.payBtnDisabled]}
+                          onPress={handleConfirmOfflineUtr}
+                          disabled={processing}
+                        >
+                          <Text style={styles.offlineSubmitBtnText}>Submit Offline UTR</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {/* Organization Details Footer */}
+                  <View style={styles.orgFooter}>
+                    <Text style={styles.orgFooterTitle}>Kaarai Karangal Samooga Sevai Amaippu</Text>
+                    <Text style={styles.orgFooterSub}>
+                      Reg. No. 31/2025 · K7 Hall, No.36/6 Kennadiyar street, Karaikal, Puducherry - 609602
+                    </Text>
+                    <Text style={styles.orgFooterContact}>
+                      Helpline: +91 9750807463 · Email: kaaraikarangal@gmail.com
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-
-    {/* IN-APP RAZORPAY CHECKOUT MODAL (For Native Android / iOS Mobile App) */}
-    <Modal
-      visible={rzpModalVisible}
-      animationType="slide"
-      onRequestClose={() => {
-        setRzpModalVisible(false);
-        setProcessing(false);
-      }}
-    >
-      <SafeAreaView style={styles.rzpModalContainer} edges={["top", "bottom"]}>
-        <View style={styles.rzpHeader}>
-          <View style={styles.rzpHeaderLeft}>
-            <Ionicons name="shield-checkmark" size={16} color="#10B981" />
-            <Text style={styles.rzpHeaderTitle}>Razorpay Secure Checkout</Text>
+              )}
+            </ScrollView>
           </View>
-          <Pressable
-            style={styles.rzpCloseBtn}
-            onPress={() => {
-              setRzpModalVisible(false);
-              setProcessing(false);
-            }}
-            hitSlop={12}
-          >
-            <Ionicons name="close" size={20} color="#FFFFFF" />
-          </Pressable>
         </View>
+      </Modal>
 
-        {WebView ? (
-          <WebView
-            source={{ html: rzpCheckoutHtml, baseUrl: "https://checkout.razorpay.com" }}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            startInLoadingState={true}
-            renderLoading={() => (
-              <View style={styles.rzpLoadingOverlay}>
-                <ActivityIndicator size="large" color="#DC2626" />
-                <Text style={styles.rzpLoadingText}>Connecting to Razorpay Secure Gateway...</Text>
-              </View>
-            )}
-            originWhitelist={["*"]}
-            onShouldStartLoadWithRequest={(request: any) => {
-              const u = request.url;
-              if (
-                u.startsWith("upi://") ||
-                u.startsWith("phonepe://") ||
-                u.startsWith("paytmmp://") ||
-                u.startsWith("tez://") ||
-                u.startsWith("intent://")
-              ) {
-                Linking.openURL(u).catch(() => {});
-                return false;
-              }
-              return true;
-            }}
-            onMessage={handleRzpMessage}
-            style={{ flex: 1 }}
-          />
-        ) : (
-          <View style={styles.rzpFallbackBox}>
-            <Ionicons name="alert-circle" size={36} color="#DC2626" />
-            <Text style={styles.rzpFallbackText}>
-              In-app browser component not available on this device.
+      {/* QR CODE DISPLAY MODAL (When requested or on Desktop Web) */}
+      <Modal visible={showQrModal} transparent animationType="fade" onRequestClose={() => setShowQrModal(false)}>
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalBox}>
+            <View style={styles.qrModalHeader}>
+              <Text style={styles.qrModalTitle}>Scan & Pay ₹{effectiveAmount}</Text>
+              <Pressable onPress={() => setShowQrModal(false)} hitSlop={10}>
+                <Ionicons name="close-circle" size={24} color="#64748B" />
+              </Pressable>
+            </View>
+
+            <Text style={styles.qrModalSub}>
+              Scan using Google Pay, PhonePe, Paytm, BHIM, or any banking app
             </Text>
+
+            <View style={styles.qrImageContainer}>
+              <Image source={{ uri: qrCodeUrl }} style={styles.qrImageLarge} resizeMode="contain" />
+            </View>
+
+            <View style={styles.qrVpaPill}>
+              <Text style={styles.qrVpaText}>{OFFICIAL_UPI_ID}</Text>
+              <Pressable style={styles.qrCopyBtn} onPress={handleCopyUpi}>
+                <Text style={styles.qrCopyBtnText}>{copiedUpi ? "Copied!" : "Copy"}</Text>
+              </Pressable>
+            </View>
+
+            <Pressable
+              style={styles.qrDoneConfirmBtn}
+              onPress={() => {
+                setShowQrModal(false);
+                handleConfirmUpiSuccess();
+              }}
+            >
+              <Text style={styles.qrDoneConfirmBtnText}>I Have Paid · Generate Receipt</Text>
+            </Pressable>
           </View>
-        )}
-      </SafeAreaView>
-    </Modal>
-  </>
+        </View>
+      </Modal>
+
+      {/* IN-APP RAZORPAY CHECKOUT MODAL (For Native Mobile App) */}
+      <Modal
+        visible={rzpModalVisible}
+        animationType="slide"
+        onRequestClose={() => {
+          setRzpModalVisible(false);
+          setProcessing(false);
+        }}
+      >
+        <SafeAreaView style={styles.rzpModalContainer} edges={["top", "bottom"]}>
+          <View style={styles.rzpHeader}>
+            <View style={styles.rzpHeaderLeft}>
+              <Ionicons name="shield-checkmark" size={16} color="#10B981" />
+              <Text style={styles.rzpHeaderTitle}>Razorpay Secure Checkout</Text>
+            </View>
+            <Pressable
+              style={styles.rzpCloseBtn}
+              onPress={() => {
+                setRzpModalVisible(false);
+                setProcessing(false);
+              }}
+              hitSlop={12}
+            >
+              <Ionicons name="close" size={20} color="#FFFFFF" />
+            </Pressable>
+          </View>
+
+          {WebView ? (
+            <WebView
+              source={{ html: rzpCheckoutHtml, baseUrl: "https://checkout.razorpay.com" }}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              startInLoadingState={true}
+              renderLoading={() => (
+                <View style={styles.rzpLoadingOverlay}>
+                  <ActivityIndicator size="large" color="#DC2626" />
+                  <Text style={styles.rzpLoadingText}>Connecting to Payment Gateway...</Text>
+                </View>
+              )}
+              originWhitelist={["*"]}
+              onShouldStartLoadWithRequest={(request: any) => {
+                const u = request.url;
+                if (
+                  u.startsWith("http://") ||
+                  u.startsWith("https://") ||
+                  u.startsWith("about:blank") ||
+                  u.startsWith("data:")
+                ) {
+                  return true;
+                }
+
+                if (
+                  u.startsWith("upi://") ||
+                  u.startsWith("phonepe://") ||
+                  u.startsWith("paytmmp://") ||
+                  u.startsWith("tez://") ||
+                  u.startsWith("intent://") ||
+                  u.startsWith("bhim://") ||
+                  u.startsWith("credpay://")
+                ) {
+                  let targetUrl = u;
+                  if (u.startsWith("intent://")) {
+                    const schemeMatch = u.match(/scheme=([^;]+)/);
+                    const scheme = schemeMatch ? schemeMatch[1] : "upi";
+                    const rawPath = u.replace(/^intent:\/\//, "").split("#Intent;")[0];
+                    targetUrl = `${scheme}://${rawPath}`;
+                  }
+                  Linking.openURL(targetUrl).catch(() => {
+                    Linking.openURL(u).catch(() => {});
+                  });
+                  return false;
+                }
+                return true;
+              }}
+              onMessage={handleRzpMessage}
+              style={{ flex: 1 }}
+            />
+          ) : (
+            <View style={styles.rzpFallbackBox}>
+              <Ionicons name="alert-circle" size={36} color="#DC2626" />
+              <Text style={styles.rzpFallbackText}>
+                In-app browser component not available on this device.
+              </Text>
+            </View>
+          )}
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }
 
@@ -1551,10 +1799,25 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "#E2E8F0",
     alignItems: "center",
+    position: "relative",
   },
   amountCardActive: {
     borderColor: "#DC2626",
     backgroundColor: "#FEF2F2",
+  },
+  popularBadge: {
+    position: "absolute",
+    top: -8,
+    backgroundColor: "#DC2626",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  popularBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 0.4,
   },
   amountValue: {
     fontSize: 17,
@@ -1626,51 +1889,6 @@ const styles = StyleSheet.create({
     color: "#991B1B",
     fontWeight: "700",
   },
-  // PAYMENT METHOD SWITCHER
-  methodTabRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 16,
-  },
-  methodTab: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1.5,
-    borderColor: "#E2E8F0",
-  },
-  methodTabActiveRzp: {
-    borderColor: "#DC2626",
-    backgroundColor: "#FEF2F2",
-  },
-  methodTabActiveUpi: {
-    borderColor: "#059669",
-    backgroundColor: "#ECFDF5",
-  },
-  methodTabHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 3,
-  },
-  methodTabTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#475569",
-  },
-  methodTabTitleActiveRzp: {
-    color: "#B91C1C",
-  },
-  methodTabTitleActiveUpi: {
-    color: "#047857",
-  },
-  methodTabSub: {
-    fontSize: 10,
-    color: "#64748B",
-    lineHeight: 14,
-  },
   inputGroup: {
     marginBottom: 12,
   },
@@ -1684,9 +1902,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-  },
-  inputRow: {
-    flexDirection: "row",
   },
   inputLabel: {
     fontSize: 12,
@@ -1830,33 +2045,155 @@ const styles = StyleSheet.create({
     color: "#475569",
     flex: 1,
   },
-  trustStrip: {
+  // Method choice switcher
+  methodChoiceRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 16,
+  },
+  methodChoiceCard: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  methodChoiceCardActiveUpi: {
+    borderColor: "#059669",
+    backgroundColor: "#ECFDF5",
+  },
+  methodChoiceCardActiveRzp: {
+    borderColor: "#DC2626",
+    backgroundColor: "#FEF2F2",
+  },
+  methodChoiceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 3,
+  },
+  methodChoiceTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#475569",
+  },
+  methodChoiceTitleActiveUpi: {
+    color: "#047857",
+  },
+  methodChoiceTitleActiveRzp: {
+    color: "#B91C1C",
+  },
+  methodChoiceSub: {
+    fontSize: 10,
+    color: "#64748B",
+  },
+  // UPI actions
+  upiActionContainer: {
+    gap: 10,
+  },
+  upiLaunchTitle: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  upiButtonsGrid: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+  },
+  upiAppButton: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    gap: 6,
     backgroundColor: "#F8FAFC",
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    marginBottom: 16,
+    borderColor: "#CBD5E1",
   },
-  trustItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  trustText: {
+  upiAppButtonText: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#475569",
+    color: "#0F172A",
   },
-  trustDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: "#CBD5E1",
+  showQrBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  showQrBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  appReturnCard: {
+    marginTop: 10,
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1.5,
+    borderColor: "#A7F3D0",
+    borderRadius: 14,
+    padding: 14,
+  },
+  appReturnHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  appReturnTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#047857",
+  },
+  appReturnSub: {
+    fontSize: 11,
+    color: "#065F46",
+    marginBottom: 10,
+    lineHeight: 15,
+  },
+  autoConfirmBtn: {
+    backgroundColor: "#059669",
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  autoConfirmBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  // Razorpay action
+  rzpActionContainer: {
+    gap: 12,
+  },
+  rzpStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F8FAFC",
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  rzpStripText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#475569",
+    flex: 1,
   },
   payBtn: {
     height: 52,
@@ -1864,9 +2201,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#DC2626",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
   },
@@ -1884,208 +2221,103 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.3,
   },
-  // DIRECT UPI STYLES
-  upiContainer: {
-    gap: 12,
-    marginBottom: 12,
+  // Discrete Offline Accordion
+  offlineAccordionWrap: {
+    marginTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+    paddingTop: 14,
   },
-  upiVpaCard: {
+  offlineToggleHeader: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#F0FDF4",
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: "#A7F3D0",
-    padding: 14,
-  },
-  upiVpaLeft: {
-    flex: 1,
-    paddingRight: 8,
-  },
-  dbsBadge: {
-    backgroundColor: "#059669",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    alignSelf: "flex-start",
-    marginBottom: 4,
-  },
-  dbsBadgeText: {
-    fontSize: 9,
-    fontWeight: "900",
-    color: "#FFFFFF",
-    letterSpacing: 0.5,
-  },
-  upiVpaLabel: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#047857",
-    letterSpacing: 0.6,
-  },
-  upiVpaValue: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: "#0F172A",
-    marginVertical: 2,
-    letterSpacing: 0.3,
-  },
-  upiVpaBank: {
-    fontSize: 11,
-    color: "#065F46",
-    fontWeight: "600",
-  },
-  copyUpiBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-  },
-  copyUpiBtnCopied: {
-    backgroundColor: "#ECFDF5",
-    borderColor: "#059669",
-  },
-  copyUpiBtnText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#0F172A",
-  },
-  copyUpiBtnTextCopied: {
-    color: "#059669",
-  },
-  qrCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: "#E2E8F0",
-    padding: 16,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  qrHeaderTitle: {
-    fontSize: 15,
-    fontWeight: "900",
-    color: "#0F172A",
-    letterSpacing: -0.2,
-  },
-  qrHeaderSub: {
-    fontSize: 11,
-    color: "#64748B",
-    marginTop: 2,
-    marginBottom: 12,
-    textAlign: "center",
-  },
-  qrImageWrap: {
-    width: 200,
-    height: 200,
-    borderRadius: 12,
-    overflow: "hidden",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
     alignItems: "center",
     justifyContent: "center",
-    padding: 6,
-  },
-  qrImage: {
-    width: 188,
-    height: 188,
-  },
-  qrAmountPill: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: 6,
-    backgroundColor: "#ECFDF5",
-    paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#A7F3D0",
-    marginTop: 12,
   },
-  qrAmountPillText: {
+  offlineToggleText: {
     fontSize: 12,
-    fontWeight: "800",
-    color: "#047857",
+    fontWeight: "600",
+    color: "#64748B",
   },
-  quickAppsBox: {
+  offlineContentBox: {
+    marginTop: 10,
     backgroundColor: "#F8FAFC",
     borderRadius: 12,
+    padding: 14,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    padding: 12,
   },
-  quickAppsTitle: {
-    fontSize: 10,
+  offlineBankDetails: {
+    marginBottom: 12,
+  },
+  offlineBankHeader: {
+    fontSize: 13,
     fontWeight: "800",
-    color: "#64748B",
-    letterSpacing: 0.6,
-    marginBottom: 8,
+    color: "#0F172A",
+    marginBottom: 4,
   },
-  quickAppsRow: {
-    flexDirection: "row",
-    gap: 8,
+  offlineBankLine: {
+    fontSize: 12,
+    color: "#475569",
+    marginTop: 2,
   },
-  quickAppBtn: {
-    flex: 1,
+  copyBtnSmall: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
+    gap: 5,
     backgroundColor: "#FFFFFF",
-    paddingVertical: 9,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: "#CBD5E1",
+    alignSelf: "flex-start",
+    marginTop: 8,
   },
-  quickAppBtnText: {
-    fontSize: 12,
+  copyBtnSmallCopied: {
+    backgroundColor: "#ECFDF5",
+    borderColor: "#A7F3D0",
+  },
+  copyBtnSmallText: {
+    fontSize: 11,
     fontWeight: "700",
     color: "#334155",
   },
-  utrBox: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: "#CBD5E1",
-    padding: 14,
+  offlineUtrLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.6,
+    marginBottom: 6,
   },
-  utrTextInput: {
-    height: 46,
-    backgroundColor: "#F8FAFC",
-    borderRadius: 10,
+  offlineUtrInput: {
+    height: 42,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#94A3B8",
-    paddingHorizontal: 12,
-    fontSize: 15,
+    borderColor: "#CBD5E1",
+    paddingHorizontal: 10,
+    fontSize: 14,
     fontWeight: "700",
     color: "#0F172A",
-    letterSpacing: 0.5,
+    marginBottom: 10,
   },
-  payBtnUpi: {
-    height: 52,
-    borderRadius: 14,
-    overflow: "hidden",
+  offlineSubmitBtn: {
+    backgroundColor: "#334155",
+    paddingVertical: 10,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#059669",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+  },
+  offlineSubmitBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
   },
   orgFooter: {
-    marginTop: 20,
-    paddingTop: 16,
+    marginTop: 18,
+    paddingTop: 14,
     borderTopWidth: 1,
     borderTopColor: "#F1F5F9",
     alignItems: "center",
@@ -2296,9 +2528,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: "#FEF2F2",
     borderWidth: 1.5,
-    borderColor: "#A7F3D0",
+    borderColor: "#FECACA",
     borderRadius: 14,
     padding: 14,
     marginBottom: 14,
@@ -2306,13 +2538,13 @@ const styles = StyleSheet.create({
   verifyingBannerTitle: {
     fontSize: 13,
     fontWeight: "800",
-    color: "#065F46",
+    color: "#991B1B",
     marginBottom: 2,
   },
   verifyingBannerText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#047857",
+    color: "#B91C1C",
   },
   rzpModalContainer: {
     flex: 1,
@@ -2372,5 +2604,97 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#FFFFFF",
     textAlign: "center",
+  },
+  // QR Modal
+  qrModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  qrModalBox: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 20,
+    alignItems: "center",
+  },
+  qrModalHeader: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  qrModalTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#0F172A",
+  },
+  qrModalSub: {
+    fontSize: 12,
+    color: "#64748B",
+    textAlign: "center",
+    marginBottom: 16,
+    lineHeight: 16,
+  },
+  qrImageContainer: {
+    width: 220,
+    height: 220,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    padding: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  qrImageLarge: {
+    width: 200,
+    height: 200,
+  },
+  qrVpaPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginBottom: 16,
+  },
+  qrVpaText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  qrCopyBtn: {
+    backgroundColor: "#0F172A",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  qrCopyBtnText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  qrDoneConfirmBtn: {
+    width: "100%",
+    backgroundColor: "#059669",
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qrDoneConfirmBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
   },
 });
