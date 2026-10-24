@@ -2,7 +2,7 @@
   "expo": {
     "name": "KK Life Drop",
     "slug": "kaaraikarangal",
-    "owner": "kaaraikarangals-team",
+    "owner": "kaaraikarangal",
     "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -61,7 +61,11 @@
         {
           "android": {
             "enableProguardInReleaseBuilds": true,
-            "buildArchs": ["arm64-v8a", "armeabi-v7a"]
+            "buildArchs": [
+              "arm64-v8a",
+              "armeabi-v7a"
+            ],
+            "enableMinifyInReleaseBuilds": true
           }
         }
       ]
@@ -72,7 +76,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "38b63997-abf7-4f63-b138-3cd11d911b46"
+        "projectId": "a1095b63-c551-4f8d-9771-36a08668d0eb"
       },
       "backendUrl": "https://uurkvfeguglvcjqgcway.supabase.co"
     }
