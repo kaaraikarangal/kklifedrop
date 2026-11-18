@@ -598,7 +598,6 @@ export async function notifyAdminNewBloodRequest(br: any): Promise<{ ok: boolean
 
     // Query active sub-admins who opted in for blood alerts
     let recipientMobiles: string[] = [];
-    const excludedMobiles = new Set<string>();
     try {
       const { data: dbAdmins } = await supabase
         .from("admin_users")
@@ -612,25 +611,15 @@ export async function notifyAdminNewBloodRequest(br: any): Promise<{ ok: boolean
           .map((a: any) => (a.mobile || "").replace(/\D/g, "").slice(-10))
           .filter((m: string) => m.length === 10);
       }
-
-      const { data: optedOut } = await supabase
-        .from("admin_users")
-        .select("mobile")
-        .eq("receive_blood_alerts", false)
-        .not("mobile", "is", null);
-
-      for (const o of optedOut || []) {
-        const clean = (o.mobile || "").replace(/\D/g, "").slice(-10);
-        if (clean) excludedMobiles.add(clean);
-      }
     } catch { }
 
     const envAdmins = ADMIN_NOTIFY_MOBILES.split(",")
       .map((m: string) => m.replace(/\D/g, "").slice(-10))
       .filter((m: string) => m.length === 10);
 
-    const baseList: string[] = recipientMobiles.length > 0 ? recipientMobiles : envAdmins;
-    const adminMobiles: string[] = Array.from(new Set(baseList)).filter((m: string) => !excludedMobiles.has(m));
+    const adminMobiles: string[] = Array.from(
+      new Set(recipientMobiles.length > 0 ? recipientMobiles : envAdmins)
+    );
 
     for (const mobile of adminMobiles) {
       try {

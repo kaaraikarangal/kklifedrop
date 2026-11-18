@@ -53,7 +53,6 @@ serve(async (req: Request) => {
     // Dynamic recipient list from database: only active admins with receive_blood_alerts = true
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     let recipientMobiles: string[] = [];
-    const excludedMobiles = new Set<string>();
 
     try {
       // 1. Fetch admins opted-in for WhatsApp blood alerts
@@ -69,29 +68,18 @@ serve(async (req: Request) => {
           .map((a: any) => (a.mobile || "").replace(/\D/g, "").slice(-10))
           .filter((m: string) => m.length === 10);
       }
-
-      // 2. Fetch admins who explicitly turned OFF alerts
-      const { data: optedOut } = await supabase
-        .from("admin_users")
-        .select("mobile")
-        .eq("receive_blood_alerts", false)
-        .not("mobile", "is", null);
-
-      for (const o of optedOut || []) {
-        const clean = (o.mobile || "").replace(/\D/g, "").slice(-10);
-        if (clean) excludedMobiles.add(clean);
-      }
     } catch (dbErr) {
       console.warn("[NotifyAdmin] Could not query admin_users, using env fallback:", dbErr);
     }
 
-    // Fallback environment admin mobiles
+    // Fallback environment admin mobiles if no opted-in admins in DB
     const envAdmins = ADMIN_NOTIFY_MOBILES.split(",")
       .map((m: string) => m.replace(/\D/g, "").slice(-10))
       .filter((m: string) => m.length === 10);
 
-    const baseList = recipientMobiles.length > 0 ? recipientMobiles : envAdmins;
-    const adminMobiles = Array.from(new Set(baseList)).filter((m) => !excludedMobiles.has(m));
+    const adminMobiles = Array.from(
+      new Set(recipientMobiles.length > 0 ? recipientMobiles : envAdmins)
+    );
 
     const results: any[] = [];
 
