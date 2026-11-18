@@ -157,7 +157,7 @@ function generateRazorpayCheckoutHtml(params: {
       try {
         var options = {
           key: ${JSON.stringify(keyId)},
-          order_id: ${JSON.stringify(orderId)},
+          ${orderId ? `order_id: ${JSON.stringify(orderId)},` : ""}
           amount: ${amountPaise},
           currency: "INR",
           name: "Kaarai Karangal",
@@ -264,8 +264,8 @@ export function KaaraiKarangalDonationModal({
   const [isCustom, setIsCustom] = useState<boolean>(false);
   const [purpose, setPurpose] = useState<string>(PURPOSES[0]);
 
-  // Payment Method Mode: "upi_app" (Primary 1-Click UPI) | "gateway" (Razorpay Cards/Gateways)
-  const [paymentMode, setPaymentMode] = useState<"upi_app" | "gateway">("upi_app");
+  // Payment Method Mode: "gateway" (Official Razorpay Gateway: Cards, UPI, NetBanking, Wallets)
+  const [paymentMode, setPaymentMode] = useState<"gateway">("gateway");
 
   // Donor form
   const [donorName, setDonorName] = useState<string>("");
@@ -635,7 +635,7 @@ export function KaaraiKarangalDonationModal({
 
         const rzpOptions: any = {
           key: keyId,
-          order_id: orderId,
+          ...(orderId ? { order_id: orderId } : {}),
           amount: amountPaise,
           currency: "INR",
           name: "Kaarai Karangal",
@@ -1293,200 +1293,44 @@ export function KaaraiKarangalDonationModal({
                     </View>
                   ) : null}
 
-                  {/* SWIGGY-STYLE PAYMENT METHOD SELECTOR TABS */}
-                  <Text style={styles.sectionLabel}>CHOOSE PAYMENT METHOD</Text>
-                  <View style={styles.methodChoiceRow}>
-                    <Pressable
-                      style={[
-                        styles.methodChoiceCard,
-                        paymentMode === "upi_app" && styles.methodChoiceCardActiveUpi,
-                      ]}
-                      onPress={() => setPaymentMode("upi_app")}
-                    >
-                      <View style={styles.methodChoiceHeader}>
-                        <Ionicons
-                          name="flash"
-                          size={18}
-                          color={paymentMode === "upi_app" ? "#059669" : "#64748B"}
-                        />
-                        <Text
-                          style={[
-                            styles.methodChoiceTitle,
-                            paymentMode === "upi_app" && styles.methodChoiceTitleActiveUpi,
-                          ]}
-                        >
-                          Direct UPI Apps
-                        </Text>
-                      </View>
-                      <Text style={styles.methodChoiceSub}>
-                        GPay · PhonePe · Paytm · QR
+                  {/* OFFICIAL SECURE PAYMENT GATEWAY (RAZORPAY: CARDS, UPI, NETBANKING) */}
+                  <View style={styles.rzpActionContainer}>
+                    <View style={styles.rzpStrip}>
+                      <Ionicons name="shield-checkmark" size={15} color="#059669" />
+                      <Text style={styles.rzpStripText}>
+                        Secure Gateway · UPI (GPay, PhonePe, Paytm, QR) · Cards · NetBanking
                       </Text>
-                    </Pressable>
+                    </View>
 
                     <Pressable
-                      style={[
-                        styles.methodChoiceCard,
-                        paymentMode === "gateway" && styles.methodChoiceCardActiveRzp,
-                      ]}
-                      onPress={() => setPaymentMode("gateway")}
+                      style={[styles.payBtn, processing && styles.payBtnDisabled]}
+                      onPress={handleDonateRazorpay}
+                      disabled={processing}
                     >
-                      <View style={styles.methodChoiceHeader}>
-                        <Ionicons
-                          name="card"
-                          size={18}
-                          color={paymentMode === "gateway" ? "#DC2626" : "#64748B"}
-                        />
-                        <Text
-                          style={[
-                            styles.methodChoiceTitle,
-                            paymentMode === "gateway" && styles.methodChoiceTitleActiveRzp,
-                          ]}
-                        >
-                          Cards & Gateway
-                        </Text>
-                      </View>
-                      <Text style={styles.methodChoiceSub}>
-                        Debit/Credit Cards · NetBanking
-                      </Text>
+                      <LinearGradient
+                        colors={["#DC2626", "#B91C1C", "#991B1B"]}
+                        style={StyleSheet.absoluteFill}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                      />
+                      {processing ? (
+                        <View style={styles.btnContent}>
+                          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.payBtnText}>
+                            {verifyingStatus || "Connecting to Razorpay..."}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.btnContent}>
+                          <Ionicons name="lock-closed" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                          <Text style={styles.payBtnText}>
+                            Pay ₹{effectiveAmount || 0} via Razorpay
+                          </Text>
+                          <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                        </View>
+                      )}
                     </Pressable>
                   </View>
-
-                  {/* ------------------------------------------------------------- */}
-                  {/* MODE 1: DIRECT UPI APPS (Google Pay, PhonePe, Paytm, QR)      */}
-                  {/* ------------------------------------------------------------- */}
-                  {paymentMode === "upi_app" ? (
-                    <View style={styles.upiActionContainer}>
-                      <Text style={styles.upiLaunchTitle}>TAP TO PAY WITH YOUR FAVORITE APP:</Text>
-
-                      <View style={styles.upiButtonsGrid}>
-                        {/* Google Pay Button */}
-                        <Pressable
-                          style={styles.upiAppButton}
-                          onPress={() => handleLaunchUpiApp("gpay")}
-                        >
-                          <Ionicons name="logo-google" size={18} color="#4285F4" />
-                          <Text style={styles.upiAppButtonText}>Google Pay</Text>
-                        </Pressable>
-
-                        {/* PhonePe Button */}
-                        <Pressable
-                          style={styles.upiAppButton}
-                          onPress={() => handleLaunchUpiApp("phonepe")}
-                        >
-                          <Ionicons name="phone-portrait-outline" size={18} color="#5F259F" />
-                          <Text style={styles.upiAppButtonText}>PhonePe</Text>
-                        </Pressable>
-
-                        {/* Paytm Button */}
-                        <Pressable
-                          style={styles.upiAppButton}
-                          onPress={() => handleLaunchUpiApp("paytm")}
-                        >
-                          <Ionicons name="wallet-outline" size={18} color="#00BAF2" />
-                          <Text style={styles.upiAppButtonText}>Paytm</Text>
-                        </Pressable>
-
-                        {/* Any Other UPI / Chooser */}
-                        <Pressable
-                          style={styles.upiAppButton}
-                          onPress={() => handleLaunchUpiApp()}
-                        >
-                          <Ionicons name="flash" size={17} color="#059669" />
-                          <Text style={styles.upiAppButtonText}>Other UPI</Text>
-                        </Pressable>
-                      </View>
-
-                      {/* Primary Full-Width UPI Button */}
-                      <Pressable
-                        style={[styles.payBtn, processing && styles.payBtnDisabled]}
-                        onPress={() => handleLaunchUpiApp()}
-                        disabled={processing}
-                      >
-                        <LinearGradient
-                          colors={["#059669", "#047857"]}
-                          style={StyleSheet.absoluteFill}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                        />
-                        <View style={styles.btnContent}>
-                          <Ionicons name="flash" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                          <Text style={styles.payBtnText}>
-                            Pay ₹{effectiveAmount || 0} via UPI App
-                          </Text>
-                        </View>
-                      </Pressable>
-
-                      {/* Scan QR Toggle */}
-                      <Pressable
-                        style={styles.showQrBtn}
-                        onPress={() => setShowQrModal(true)}
-                      >
-                        <Ionicons name="qr-code-outline" size={16} color="#0F172A" />
-                        <Text style={styles.showQrBtnText}>Show QR Code to Scan</Text>
-                      </Pressable>
-
-                      {/* SWIGGY-STYLE AUTO-RECEIPT BANNER UPON RETURN */}
-                      {waitingForAppReturn ? (
-                        <View style={styles.appReturnCard}>
-                          <View style={styles.appReturnHeader}>
-                            <Ionicons name="checkmark-circle" size={20} color="#059669" />
-                            <Text style={styles.appReturnTitle}>Completed Your UPI Payment?</Text>
-                          </View>
-                          <Text style={styles.appReturnSub}>
-                            Tap below to automatically generate your official 80G acknowledgement receipt:
-                          </Text>
-                          <Pressable
-                            style={styles.autoConfirmBtn}
-                            onPress={handleConfirmUpiSuccess}
-                            disabled={processing}
-                          >
-                            <Text style={styles.autoConfirmBtnText}>
-                              ✓ Yes, Generate Official Receipt
-                            </Text>
-                          </Pressable>
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : (
-                    /* ----------------------------------------------------------- */
-                    /* MODE 2: RAZORPAY GATEWAY (Cards, NetBanking, Wallets)       */
-                    /* ----------------------------------------------------------- */
-                    <View style={styles.rzpActionContainer}>
-                      <View style={styles.rzpStrip}>
-                        <Ionicons name="lock-closed" size={14} color="#059669" />
-                        <Text style={styles.rzpStripText}>
-                          All Domestic/International Cards · NetBanking · Official Gateway
-                        </Text>
-                      </View>
-
-                      <Pressable
-                        style={[styles.payBtn, processing && styles.payBtnDisabled]}
-                        onPress={handleDonateRazorpay}
-                        disabled={processing}
-                      >
-                        <LinearGradient
-                          colors={["#DC2626", "#B91C1C", "#991B1B"]}
-                          style={StyleSheet.absoluteFill}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                        />
-                        {processing ? (
-                          <View style={styles.btnContent}>
-                            <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-                            <Text style={styles.payBtnText}>Connecting to Razorpay...</Text>
-                          </View>
-                        ) : (
-                          <View style={styles.btnContent}>
-                            <Ionicons name="card" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                            <Text style={styles.payBtnText}>
-                              Pay ₹{effectiveAmount || 0} via Razorpay
-                            </Text>
-                            <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
-                          </View>
-                        )}
-                      </Pressable>
-                    </View>
-                  )}
 
                   {/* ------------------------------------------------------------- */}
                   {/* DISCRETE OFFLINE / DIRECT BANK ACCORDION (UNOBTRUSIVE)        */}
@@ -1509,7 +1353,7 @@ export function KaaraiKarangalDonationModal({
                     {showOfflineFallback ? (
                       <View style={styles.offlineContentBox}>
                         <View style={styles.offlineBankDetails}>
-                          <Text style={styles.offlineBankHeader}>DBS Bank Account / Direct UPI</Text>
+                          <Text style={styles.offlineBankHeader}>DBS Bank Account Transfer (Official)</Text>
                           <Text style={styles.offlineBankLine}>
                             <Text style={{ fontWeight: "700" }}>Beneficiary:</Text> {BENEFICIARY_NAME_FULL}
                           </Text>

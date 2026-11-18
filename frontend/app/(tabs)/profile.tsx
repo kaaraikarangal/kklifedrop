@@ -118,7 +118,7 @@ export default function Profile() {
         <View style={styles.donorIdBadgeWrap}>
           <View style={styles.donorIdBadge}>
             <Ionicons name="id-card" size={13} color="#2563EB" />
-            <Text style={styles.donorIdBadgeText}>{me.donor_number || "KKLD0001"}</Text>
+            <Text style={styles.donorIdBadgeText}>{me.donor_number || "—"}</Text>
           </View>
           <View style={styles.verifiedDonorBadge}>
             <Ionicons name="shield-checkmark" size={11} color="#10B981" />
@@ -228,6 +228,8 @@ export default function Profile() {
         </Pressable>
       ) : null}
 
+      {/*
+      // [PAYMENT_GATEWAY_APPROVAL_PENDING] Uncomment after Razorpay live gateway approval:
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionNoMargin}>Support Kaarai Karangal</Text>
         <Pressable
@@ -246,7 +248,6 @@ export default function Profile() {
           end={{ x: 1, y: 1 }}
           style={styles.donationHeroCard}
         >
-          {/* Header: Icon + Title & Tagline + Badge */}
           <View style={styles.supportHeaderRow}>
             <View style={styles.supportHeaderLeft}>
               <View style={styles.supportHeartBadge}>
@@ -266,7 +267,6 @@ export default function Profile() {
             </View>
           </View>
 
-          {/* Middle Row: Quick Chips + Primary CTA Button */}
           <View style={styles.supportActionRow}>
             <View style={styles.supportChipsGroup}>
               {[100, 250, 500, 1000].map((amt) => (
@@ -297,7 +297,6 @@ export default function Profile() {
             </Pressable>
           </View>
 
-          {/* Micro Trust Strip */}
           <View style={styles.supportMicroTrust}>
             <View style={styles.supportTrustItem}>
               <Ionicons name="shield-checkmark" size={11} color="#FBBF24" />
@@ -311,6 +310,7 @@ export default function Profile() {
           </View>
         </LinearGradient>
       </View>
+      */}
 
       <Text style={styles.section}>Legal & Policies</Text>
       <Pressable

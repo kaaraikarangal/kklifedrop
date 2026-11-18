@@ -93,7 +93,7 @@ serve(async (req: Request) => {
     if (action === "list_sub_admins") {
       const { data, error } = await supabase
         .from("admin_users")
-        .select("id, email, name, status, created_at")
+        .select("id, email, name, mobile, receive_blood_alerts, status, created_at")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -108,6 +108,8 @@ serve(async (req: Request) => {
       const email = (body.email || "").trim().toLowerCase();
       const password = (body.password || "").trim();
       const name = (body.name || "").trim();
+      const mobile = (body.mobile || "").replace(/\D/g, "").slice(-10) || null;
+      const receive_blood_alerts = body.receive_blood_alerts !== false;
       const creatorEmail = (body.admin_email || SUPER_ADMIN_EMAIL).trim();
 
       if (!email || !password || !name) {
@@ -136,10 +138,12 @@ serve(async (req: Request) => {
         .insert({
           email,
           name,
+          mobile,
+          receive_blood_alerts,
           password_hash: passwordHash,
           status: "active",
         })
-        .select("id, email, name, status, created_at")
+        .select("id, email, name, mobile, receive_blood_alerts, status, created_at")
         .single();
 
       if (insErr) throw insErr;
@@ -150,11 +154,70 @@ serve(async (req: Request) => {
         target_type: "sub_admin",
         target_id: newAdmin.id,
         timestamp: new Date().toISOString(),
-        metadata: { created_email: email, created_name: name },
+        metadata: { created_email: email, created_name: name, mobile, receive_blood_alerts },
       });
 
       return new Response(
         JSON.stringify({ ok: true, admin: newAdmin }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── 3B. TOGGLE SUB-ADMIN BLOOD ALERTS PREFERENCE ────────────────────────────
+    if (action === "toggle_alerts" || action === "update_alert_preference") {
+      const { target_id, receive_blood_alerts, admin_email } = body;
+      const willReceive = Boolean(receive_blood_alerts);
+
+      const { error: updErr } = await supabase
+        .from("admin_users")
+        .update({ receive_blood_alerts: willReceive })
+        .eq("id", target_id);
+
+      if (updErr) throw updErr;
+
+      await supabase.from("audit_logs").insert({
+        admin_id: admin_email || SUPER_ADMIN_EMAIL,
+        action: "update_sub_admin_alerts",
+        target_type: "sub_admin",
+        target_id,
+        timestamp: new Date().toISOString(),
+        metadata: { receive_blood_alerts: willReceive },
+      });
+
+      return new Response(
+        JSON.stringify({ ok: true, receive_blood_alerts: willReceive }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── 3C. UPDATE SUB-ADMIN DETAILS (Mobile / Name) ───────────────────────────
+    if (action === "update_sub_admin") {
+      const { target_id, name, mobile, receive_blood_alerts, admin_email } = body;
+      const updates: any = {};
+      if (name !== undefined) updates.name = String(name).trim();
+      if (mobile !== undefined) updates.mobile = String(mobile).replace(/\D/g, "").slice(-10) || null;
+      if (receive_blood_alerts !== undefined) updates.receive_blood_alerts = Boolean(receive_blood_alerts);
+
+      const { data: updated, error: updErr } = await supabase
+        .from("admin_users")
+        .update(updates)
+        .eq("id", target_id)
+        .select("id, email, name, mobile, receive_blood_alerts, status, created_at")
+        .single();
+
+      if (updErr) throw updErr;
+
+      await supabase.from("audit_logs").insert({
+        admin_id: admin_email || SUPER_ADMIN_EMAIL,
+        action: "update_sub_admin",
+        target_type: "sub_admin",
+        target_id,
+        timestamp: new Date().toISOString(),
+        metadata: updates,
+      });
+
+      return new Response(
+        JSON.stringify({ ok: true, admin: updated }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

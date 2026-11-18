@@ -74,6 +74,7 @@ fernet = MultiFernet(_valid_fernets)
 SMS_PROVIDER = os.environ.get("SMS_PROVIDER", "mock").lower()
 EMAIL_PROVIDER = os.environ.get("EMAIL_PROVIDER", "mock").lower()
 FAST2SMS_API_KEY = os.environ.get("FAST2SMS_API_KEY", "")
+FAST2SMS_OTP_ID = os.environ.get("FAST2SMS_OTP_ID", "0eaf711751")
 FAST2SMS_MESSAGE_ID = os.environ.get("FAST2SMS_MESSAGE_ID", "35846")
 FAST2SMS_PHONE_NUMBER_ID = os.environ.get("FAST2SMS_PHONE_NUMBER_ID", "1281701878369604")
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_51KaaraiKarangal")
@@ -232,7 +233,40 @@ async def record_audit_log(
 
 # Provider abstractions - Fast2SMS & Mock
 # ---------------------------------------------------------------------------
+async def send_fast2sms_sms_otp(mobile: str, otp: str, expiry_minutes: int = 10) -> dict:
+    """Primary delivery: Fast2SMS OTP Send API via DLT Template (0eaf711751)."""
+    if not FAST2SMS_API_KEY:
+        logger.warning("[Fast2SMS SMS OTP] API key not configured")
+        return {"status": "error", "message": "FAST2SMS_API_KEY missing in .env"}
+    clean_mobile = re.sub(r"\D", "", mobile)[-10:]
+    url = "https://www.fast2sms.com/dev/otp/send"
+    headers = {
+        "authorization": FAST2SMS_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "mobile": clean_mobile,
+        "otp_id": FAST2SMS_OTP_ID,
+        "otp_expiry": expiry_minutes,
+        "otp_length": len(otp),
+        "otp": otp,
+        "variables_values": f"{otp}|{expiry_minutes}"
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            data = resp.json()
+            logger.info(f"[Fast2SMS SMS OTP] {clean_mobile}: {data}")
+            if data.get("return") is True or data.get("status_code") == 200:
+                return {"status": "sent", "channel": "sms", "provider": "fast2sms_sms", "data": data}
+            return {"status": "failed", "channel": "sms", "provider": "fast2sms_sms", "data": data}
+    except Exception as e:
+        logger.error(f"[Fast2SMS SMS OTP] Error sending to {clean_mobile}: {e}")
+        return {"status": "error", "channel": "sms", "error": str(e), "provider": "fast2sms_sms"}
+
+
 async def send_fast2sms_otp(mobile: str, otp: str) -> dict:
+    """WhatsApp delivery: Template API -> Session API fallback."""
     if not FAST2SMS_API_KEY:
         logger.warning("[Fast2SMS] API key not configured")
         return {"status": "error", "message": "FAST2SMS_API_KEY missing in .env"}
@@ -256,7 +290,7 @@ async def send_fast2sms_otp(mobile: str, otp: str) -> dict:
             data = resp.json()
             logger.info(f"[Fast2SMS WhatsApp OTP Template] {clean_mobile}: {data}")
             if data.get("return") is True:
-                return {"status": "sent", "provider": "fast2sms_whatsapp", "data": data}
+                return {"status": "sent", "channel": "whatsapp", "provider": "fast2sms_whatsapp", "data": data}
             logger.warning(f"[Fast2SMS WhatsApp] Template API rejected, trying session API: {data}")
     except Exception as e:
         logger.error(f"[Fast2SMS WhatsApp OTP Template] Error sending to {clean_mobile}: {e}")
@@ -267,7 +301,7 @@ async def send_fast2sms_otp(mobile: str, otp: str) -> dict:
         "phone_number_id": FAST2SMS_PHONE_NUMBER_ID,
         "to": clean_mobile,
         "type": "text",
-        "text": f"{otp} is your verification code. For your security, do not share this code.",
+        "text": f"Your OTP for verification on KK Life Drop is {otp}. Valid for 10 minutes. Please do not share this OTP with anyone. - Kaarai Karangal Samooga Sevai Amaippu",
     }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -275,11 +309,11 @@ async def send_fast2sms_otp(mobile: str, otp: str) -> dict:
             data = resp.json()
             logger.info(f"[Fast2SMS WhatsApp OTP Session] {clean_mobile}: {data}")
             if data.get("return") is True:
-                return {"status": "sent", "provider": "fast2sms_whatsapp", "data": data}
-            return {"status": "failed", "provider": "fast2sms_whatsapp", "data": data}
+                return {"status": "sent", "channel": "whatsapp", "provider": "fast2sms_whatsapp", "data": data}
+            return {"status": "failed", "channel": "whatsapp", "provider": "fast2sms_whatsapp", "data": data}
     except Exception as e:
         logger.error(f"[Fast2SMS WhatsApp OTP Session] Error sending to {clean_mobile}: {e}")
-        return {"status": "error", "error": str(e), "provider": "fast2sms_whatsapp"}
+        return {"status": "error", "channel": "whatsapp", "error": str(e), "provider": "fast2sms_whatsapp"}
 
 
 async def send_fast2sms_message(mobile: str, message: str) -> dict:
@@ -310,14 +344,26 @@ async def send_fast2sms_message(mobile: str, message: str) -> dict:
         return {"status": "error", "error": str(e), "provider": "fast2sms"}
 
 
-async def send_sms(mobile: str, message: str, otp: Optional[str] = None) -> dict:
+async def send_sms(mobile: str, message: str, otp: Optional[str] = None, channel: str = "sms") -> dict:
     if SMS_PROVIDER == "fast2sms":
         if otp:
-            return await send_fast2sms_otp(mobile, otp)
+            # If user didn't request whatsapp explicitly, try SMS (text message) first
+            if channel != "whatsapp":
+                sms_res = await send_fast2sms_sms_otp(mobile, otp, OTP_EXP_MINUTES)
+                if sms_res.get("status") == "sent":
+                    return sms_res
+                logger.warning(f"[Fast2SMS] SMS OTP failed ({sms_res}), falling back to WhatsApp")
+            # Fallback to WhatsApp or explicit WhatsApp
+            wa_res = await send_fast2sms_otp(mobile, otp)
+            if wa_res.get("status") == "sent":
+                wa_res["fallback_used"] = (channel != "whatsapp")
+                wa_res["channel"] = "whatsapp"
+                return wa_res
+            return wa_res
         return await send_fast2sms_message(mobile, message)
     elif SMS_PROVIDER == "mock":
         logger.info(f"[MOCK-SMS] to {mobile}: {message}")
-        return {"status": "sent", "provider": "mock"}
+        return {"status": "sent", "channel": channel, "provider": "mock"}
     logger.warning(f"[SMS] provider {SMS_PROVIDER} not implemented, falling back to log")
     return {"status": "pending", "provider": SMS_PROVIDER}
 
@@ -379,6 +425,7 @@ async def send_expo_push_notifications(
 # ---------------------------------------------------------------------------
 class SendOtpIn(BaseModel):
     mobile: str
+    channel: Optional[Literal["sms", "whatsapp"]] = "sms"
 
     @field_validator("mobile")
     @classmethod
@@ -827,28 +874,45 @@ async def send_otp(body: SendOtpIn):
         "created_at": iso(now_utc()),
     }).execute()
 
+    req_channel = body.channel or "sms"
     await record_audit_log(
         actor_id=f"user:{clean_mobile}",
         action="request_otp",
         target_type="auth",
         target_id=clean_mobile,
-        metadata={"mobile": clean_mobile, "channel": "whatsapp_or_sms"},
+        metadata={"mobile": clean_mobile, "channel": req_channel},
     )
 
-    sms_res = await send_sms(clean_mobile, f"Your KK Life Drop OTP is {otp}. Valid {OTP_EXP_MINUTES} minutes.", otp=otp)
+    msg_text = f"Your OTP for verification on KK Life Drop is {otp}. Valid for {OTP_EXP_MINUTES} minutes. Please do not share this OTP with anyone. - Kaarai Karangal Samooga Sevai Amaippu"
+    sms_res = await send_sms(clean_mobile, msg_text, otp=otp, channel=req_channel)
     if SMS_PROVIDER == "fast2sms":
         if sms_res.get("status") != "sent":
             data = sms_res.get("data") or {}
-            msg = data.get("message") or sms_res.get("error") or "Failed to send verification code via WhatsApp"
+            msg = data.get("message") or sms_res.get("error") or "Failed to send verification code"
             logger.error(f"[Fast2SMS Live Error] {msg}")
             raise HTTPException(502, f"Gateway Error: {msg}")
-        return {"ok": True, "mobile": clean_mobile, "expires_in_minutes": OTP_EXP_MINUTES, "message": "Verification code sent to your WhatsApp successfully"}
+        delivery_channel = sms_res.get("channel", "sms")
+        fallback_used = sms_res.get("fallback_used", False)
+        if delivery_channel == "whatsapp":
+            success_msg = "SMS delivery unavailable. Verification code sent via WhatsApp successfully" if fallback_used else "Verification code sent to your WhatsApp successfully"
+        else:
+            success_msg = "Verification code sent via SMS successfully"
+        return {
+            "ok": True,
+            "mobile": clean_mobile,
+            "channel": delivery_channel,
+            "fallback_used": fallback_used,
+            "expires_in_minutes": OTP_EXP_MINUTES,
+            "message": success_msg,
+        }
 
     return {
         "ok": True,
         "mobile": clean_mobile,
+        "channel": req_channel,
         "expires_in_minutes": OTP_EXP_MINUTES,
         "message": "Verification code dispatched successfully",
+        "dev_otp": otp,
     }
 
 

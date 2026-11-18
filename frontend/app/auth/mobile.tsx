@@ -31,12 +31,31 @@ interface OtpInputProps {
   length: number;
   value: string;
   onChange: (val: string) => void;
+  onComplete?: (val: string) => void;
   disabled?: boolean;
+  autoFocus?: boolean;
 }
 
-function OtpInput({ length, value, onChange, disabled }: OtpInputProps) {
+function OtpInput({ length, value, onChange, onComplete, disabled, autoFocus = true }: OtpInputProps) {
   const inputRef = useRef<TextInput>(null);
   const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (autoFocus && !disabled) {
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [autoFocus, disabled]);
+
+  function handleTextChange(t: string) {
+    const clean = t.replace(/\D/g, "").slice(0, length);
+    onChange(clean);
+    if (clean.length === length) {
+      onComplete?.(clean);
+    }
+  }
 
   function shake() {
     Animated.sequence([
@@ -53,21 +72,22 @@ function OtpInput({ length, value, onChange, disabled }: OtpInputProps) {
 
   return (
     <Animated.View style={[styles.otpRow, { transform: [{ translateX: shakeAnim }] }]}>
-      {/* Hidden real input that captures keyboard */}
+      {/* Hidden real input that captures keyboard & supports SMS autofill */}
       <TextInput
         ref={inputRef}
         value={value}
-        onChangeText={(t) => onChange(t.replace(/\D/g, "").slice(0, length))}
+        onChangeText={handleTextChange}
         keyboardType="number-pad"
         maxLength={length}
         style={styles.otpHiddenInput}
         caretHidden
         editable={!disabled}
         testID="otp-input"
-        autoFocus={false}
+        autoFocus={autoFocus}
         secureTextEntry={false}
         importantForAutofill="yes"
-        autoComplete="one-time-code"
+        autoComplete="sms-otp"
+        textContentType="oneTimeCode"
       />
       {/* Visual digit boxes */}
       {digits.map((digit, i) => {
@@ -118,6 +138,7 @@ export default function MobileAuth() {
   const [step, setStep] = useState<"mobile" | "otp">("mobile");
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");
+  const [channel, setChannel] = useState<"sms" | "whatsapp">("sms");
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [attemptsLeft, setAttemptsLeft] = useState<number | null>(null);
@@ -151,20 +172,55 @@ export default function MobileAuth() {
     return () => { if (interval) clearInterval(interval); };
   }, [cooldown]);
 
-  async function sendOtp() {
+  // WebOTP API: Automatically detect OTP from incoming SMS on supported browsers/devices
+  useEffect(() => {
+    if (step !== "otp") return;
+    if (typeof window !== "undefined" && "OTPCredential" in window && (navigator as any)?.credentials) {
+      const ac = new AbortController();
+      (navigator as any).credentials
+        .get({
+          otp: { transport: ["sms"] },
+          signal: ac.signal,
+        })
+        .then((otpCredential: any) => {
+          if (otpCredential?.code) {
+            const detected = otpCredential.code.replace(/\D/g, "").slice(0, OTP_LENGTH);
+            if (detected.length === OTP_LENGTH) {
+              setOtp(detected);
+              verify(detected);
+            }
+          }
+        })
+        .catch(() => {});
+      return () => ac.abort();
+    }
+  }, [step]);
+
+  async function sendOtp(targetChannel: "sms" | "whatsapp" = "sms") {
     const clean = mobile.replace(/\D/g, "");
     if (clean.length < 10) {
       return toast("error", "Invalid Number", "Enter a valid 10-digit mobile number.");
     }
     setLoading(true);
     try {
-      await api("/auth/send-otp", { body: { mobile: clean } });
+      const res: any = await api("/auth/send-otp", { body: { mobile: clean, channel: targetChannel } });
+      const actualChannel: "sms" | "whatsapp" = res.channel || targetChannel;
+      setChannel(actualChannel);
       setCooldown(45);
       setOtp("");
       setAttemptsLeft(null);
       setStep("otp");
       animateToOtp();
-      toast("success", "Code Sent", `A 6-digit code was dispatched to WhatsApp (+91 ${clean}).`);
+
+      if (actualChannel === "whatsapp") {
+        if (res.fallback_used) {
+          toast("info", "Sent via WhatsApp", `SMS delivery unavailable. Your 6-digit OTP was sent to WhatsApp (+91 ${clean}).`);
+        } else {
+          toast("success", "WhatsApp Code Sent", `A 6-digit code was dispatched to WhatsApp (+91 ${clean}).`);
+        }
+      } else {
+        toast("success", "SMS Code Sent", `A 6-digit OTP was dispatched via SMS (Text Message) to +91 ${clean}.`);
+      }
     } catch (e: any) {
       toast("error", "Failed", e.message);
     } finally {
@@ -172,13 +228,14 @@ export default function MobileAuth() {
     }
   }
 
-  async function verify() {
-    if (otp.trim().length !== OTP_LENGTH) {
+  async function verify(explicitCode?: string) {
+    const code = (explicitCode || otp).trim();
+    if (code.length !== OTP_LENGTH) {
       return toast("error", "Incomplete", `Enter all ${OTP_LENGTH} digits of your verification code.`);
     }
     setLoading(true);
     try {
-      const r: any = await api("/auth/verify-otp", { body: { mobile: mobile.replace(/\D/g, ""), otp: otp.trim() } });
+      const r: any = await api("/auth/verify-otp", { body: { mobile: mobile.replace(/\D/g, ""), otp: code } });
       await setSession(r.token, "user", r.mobile);
       syncPushTokenWithBackend().catch(() => {});
       toast("success", "Verified ✓", "Mobile number verified successfully.");
@@ -251,7 +308,7 @@ export default function MobileAuth() {
               </View>
               <Text style={styles.cardTitle}>Enter Mobile Number</Text>
               <Text style={styles.cardSub}>
-                We'll send a secure 6-digit verification code to your WhatsApp.
+                We'll send a 6-digit verification code to your mobile number.
               </Text>
             </View>
 
@@ -265,13 +322,15 @@ export default function MobileAuth() {
               maxLength={10}
             />
 
-            {/* WhatsApp badge */}
-            <View style={styles.waBadge}>
-              <Ionicons name="logo-whatsapp" size={18} color="#25D366" />
+            {/* Delivery badge */}
+            <View style={styles.deliveryBadge}>
+              <View style={styles.deliveryBadgeIcon}>
+                <Ionicons name="chatbox-ellipses-outline" size={18} color={colors.brandPrimary} />
+              </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={styles.waBadgeTitle}>Sent via WhatsApp</Text>
-                <Text style={styles.waBadgeSub}>
-                  End-to-end encrypted · 5-minute expiry · Single use
+                <Text style={styles.deliveryBadgeTitle}>Delivered via SMS (Text Message)</Text>
+                <Text style={styles.deliveryBadgeSub}>
+                  Valid for 10 minutes · WhatsApp fallback available
                 </Text>
               </View>
               <View style={styles.lockIcon}>
@@ -282,9 +341,18 @@ export default function MobileAuth() {
             <Button
               testID="send-otp-btn"
               label="Send Verification Code"
-              onPress={sendOtp}
+              onPress={() => sendOtp("sms")}
               loading={loading}
             />
+
+            <Pressable
+              onPress={() => sendOtp("whatsapp")}
+              disabled={loading}
+              style={styles.preferWaBtn}
+            >
+              <Ionicons name="logo-whatsapp" size={15} color="#15803D" />
+              <Text style={styles.preferWaText}>Prefer WhatsApp? Send code via WhatsApp</Text>
+            </Pressable>
           </View>
         )}
 
@@ -292,12 +360,16 @@ export default function MobileAuth() {
         {step === "otp" && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <View style={[styles.iconCircle, { backgroundColor: "#E8F5E9" }]}>
-                <Ionicons name="shield-checkmark-outline" size={26} color="#2E7D32" />
+              <View style={[styles.iconCircle, { backgroundColor: channel === "whatsapp" ? "#E8F5E9" : "#EFF6FF" }]}>
+                <Ionicons
+                  name={channel === "whatsapp" ? "logo-whatsapp" : "chatbubble-ellipses-outline"}
+                  size={26}
+                  color={channel === "whatsapp" ? "#2E7D32" : "#1D4ED8"}
+                />
               </View>
               <Text style={styles.cardTitle}>Verify Your Number</Text>
               <Text style={styles.cardSub}>
-                Enter the 6-digit code sent to WhatsApp{"\n"}
+                Enter the 6-digit code sent via {channel === "whatsapp" ? "WhatsApp" : "SMS"}{"\n"}
                 <Text style={styles.mobileHighlight}>+91 {mobile}</Text>
               </Text>
             </View>
@@ -308,12 +380,27 @@ export default function MobileAuth() {
                 length={OTP_LENGTH}
                 value={otp}
                 onChange={setOtp}
+                onComplete={(fullCode) => verify(fullCode)}
                 disabled={loading}
+                autoFocus={true}
               />
               <Text style={styles.otpHint}>
-                <Ionicons name="shield-checkmark" size={11} color="#16A34A" /> Enter the 6-digit code received on WhatsApp
+                <Ionicons name="shield-checkmark" size={11} color="#16A34A" /> Enter the 6-digit code received on {channel === "whatsapp" ? "WhatsApp" : "SMS"}
               </Text>
             </View>
+
+            {/* WhatsApp fallback button if sent via SMS */}
+            {channel === "sms" && (
+              <Pressable
+                testID="whatsapp-fallback-btn"
+                onPress={() => sendOtp("whatsapp")}
+                disabled={loading}
+                style={styles.waFallbackBtn}
+              >
+                <Ionicons name="logo-whatsapp" size={17} color="#15803D" />
+                <Text style={styles.waFallbackText}>Didn't receive SMS? Send code via WhatsApp</Text>
+              </Pressable>
+            )}
 
             {/* Attempts warning */}
             {attemptsLeft !== null && attemptsLeft <= 3 && (
@@ -338,12 +425,12 @@ export default function MobileAuth() {
             <View style={styles.footerRow}>
               <Pressable
                 disabled={cooldown > 0 || loading}
-                onPress={sendOtp}
+                onPress={() => sendOtp(channel)}
                 style={[styles.resendBtn, (cooldown > 0 || loading) && { opacity: 0.45 }]}
               >
                 <Ionicons name="refresh-outline" size={15} color={colors.brandPrimary} />
                 <Text style={styles.resendText}>
-                  {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend Code"}
+                  {cooldown > 0 ? `Resend in ${cooldown}s` : `Resend ${channel === "whatsapp" ? "WhatsApp" : "SMS"}`}
                 </Text>
               </Pressable>
 
@@ -463,7 +550,67 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
 
-  // WhatsApp badge
+  // Delivery badge
+  deliveryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: 16,
+    marginTop: 4,
+  },
+  deliveryBadgeIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deliveryBadgeTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 2,
+  },
+  deliveryBadgeSub: {
+    fontSize: 11,
+    color: "#64748B",
+  },
+  preferWaBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 14,
+    paddingVertical: 6,
+  },
+  preferWaText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#15803D",
+  },
+  waFallbackBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+    borderRadius: radius.md,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  waFallbackText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#15803D",
+  },
   waBadge: {
     flexDirection: "row",
     alignItems: "center",

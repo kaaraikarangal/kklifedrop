@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS public.admin_users (
   email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
   name text,
+  mobile text,
+  receive_blood_alerts boolean NOT NULL DEFAULT true,
   status text NOT NULL DEFAULT 'active',
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -233,18 +235,51 @@ CREATE POLICY "Allow public donation lookup"
   USING (true);
 
 -- -----------------------------------------------------------------------------
--- 7. Unique Donor ID Sequence & Trigger (Format: KKLD0001, KKLD0002, ...)
+-- 7. Unique Donor ID Sequence & Trigger (Strict Sequential Format: KKLD0001, KKLD0002, ...)
 -- -----------------------------------------------------------------------------
-ALTER TABLE public.donors ADD COLUMN IF NOT EXISTS donor_number varchar(20) UNIQUE;
+ALTER TABLE public.donors ADD COLUMN IF NOT EXISTS donor_number varchar(50) UNIQUE;
 
 CREATE SEQUENCE IF NOT EXISTS public.donor_seq START WITH 1 INCREMENT BY 1;
 
 CREATE OR REPLACE FUNCTION public.set_donor_number()
 RETURNS trigger AS $$
+DECLARE
+  existing_num varchar(50);
+  next_num integer;
 BEGIN
-  IF NEW.donor_number IS NULL OR NEW.donor_number = '' THEN
-    NEW.donor_number := 'KKLD' || LPAD(nextval('public.donor_seq')::text, 4, '0');
+  -- If donor_number is already provided and valid, preserve it
+  IF NEW.donor_number IS NOT NULL AND NEW.donor_number <> '' AND NEW.donor_number NOT LIKE 'TMP_%' THEN
+    RETURN NEW;
   END IF;
+
+  -- If this mobile already exists in public.donors (e.g. upsert/re-register), preserve their existing donor_number!
+  IF NEW.mobile IS NOT NULL AND NEW.mobile <> '' THEN
+    SELECT donor_number INTO existing_num
+    FROM public.donors
+    WHERE mobile = NEW.mobile
+    LIMIT 1;
+
+    IF existing_num IS NOT NULL AND existing_num <> '' AND existing_num NOT LIKE 'TMP_%' THEN
+      NEW.donor_number := existing_num;
+      RETURN NEW;
+    END IF;
+  END IF;
+
+  -- Serialize concurrent inserts with transactional advisory lock
+  PERFORM pg_advisory_xact_lock(424242);
+
+  -- Strictly sequential: count of existing donors + 1 (or max numeric donor number + 1)
+  -- This guarantees if 4 users exist, the 5th user gets KKLD0005
+  SELECT COALESCE(MAX(NULLIF(regexp_replace(donor_number, '\D', '', 'g'), '')::integer), 0) + 1
+  INTO next_num
+  FROM public.donors
+  WHERE donor_number LIKE 'KKLD%';
+
+  NEW.donor_number := 'KKLD' || LPAD(next_num::text, 4, '0');
+
+  -- Keep the PostgreSQL sequence updated as well
+  PERFORM setval('public.donor_seq', next_num, true);
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -254,6 +289,74 @@ CREATE TRIGGER trg_set_donor_number
 BEFORE INSERT ON public.donors
 FOR EACH ROW
 EXECUTE FUNCTION public.set_donor_number();
+
+-- Resequence helper function to keep 1..N sequential numbering without gaps
+CREATE OR REPLACE FUNCTION public.resequence_donor_numbers()
+RETURNS void AS $$
+DECLARE
+  r RECORD;
+  idx INTEGER := 1;
+BEGIN
+  PERFORM pg_advisory_xact_lock(424242);
+
+  FOR r IN (SELECT id FROM public.donors ORDER BY created_at ASC) LOOP
+    UPDATE public.donors
+    SET donor_number = 'TMP_' || LPAD(idx::text, 6, '0')
+    WHERE id = r.id;
+    idx := idx + 1;
+  END LOOP;
+
+  idx := 1;
+  FOR r IN (SELECT id FROM public.donors ORDER BY created_at ASC) LOOP
+    UPDATE public.donors
+    SET donor_number = 'KKLD' || LPAD(idx::text, 4, '0')
+    WHERE id = r.id;
+    idx := idx + 1;
+  END LOOP;
+
+  PERFORM setval('public.donor_seq', GREATEST((SELECT COUNT(*) FROM public.donors), 1), true);
+
+  -- Sync any blood donation records to matching donor numbers
+  UPDATE public.blood_donation_records b
+  SET donor_number = d.donor_number
+  FROM public.donors d
+  WHERE b.donor_id = d.id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger on delete: if any donor is deleted, resequence all donors so numbering stays strictly 1..N
+CREATE OR REPLACE FUNCTION public.on_donor_deleted()
+RETURNS trigger AS $$
+BEGIN
+  PERFORM public.resequence_donor_numbers();
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_donor_deleted ON public.donors;
+CREATE TRIGGER trg_donor_deleted
+AFTER DELETE ON public.donors
+FOR EACH STATEMENT
+EXECUTE FUNCTION public.on_donor_deleted();
+
+-- Trigger on update: if a donor's donor_number is updated, propagate to blood_donation_records
+CREATE OR REPLACE FUNCTION public.sync_blood_donation_records_donor_number()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.donor_number IS DISTINCT FROM OLD.donor_number THEN
+    UPDATE public.blood_donation_records
+    SET donor_number = NEW.donor_number
+    WHERE donor_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_bdr_donor_number ON public.donors;
+CREATE TRIGGER trg_sync_bdr_donor_number
+AFTER UPDATE OF donor_number ON public.donors
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_blood_donation_records_donor_number();
 
 -- -----------------------------------------------------------------------------
 -- 8. Blood Donation History Records Table

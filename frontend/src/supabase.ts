@@ -11,11 +11,20 @@ export const FAST2SMS_API_KEY =
   process.env.EXPO_PUBLIC_FAST2SMS_API_KEY?.trim() ||
   "rO09Unsxw1b7cXI4fZE3YvQWSACLFNoMtB26hezkymDPdgjlJimuenxOJjTL3Mhq2atf5IlyB8wG6r4D";
 
+export const FAST2SMS_OTP_ID =
+  process.env.EXPO_PUBLIC_FAST2SMS_OTP_ID?.trim() || "0eaf711751";
+
 export const FAST2SMS_MESSAGE_ID =
   process.env.EXPO_PUBLIC_FAST2SMS_MESSAGE_ID?.trim() || "35846";
 
 export const FAST2SMS_PHONE_NUMBER_ID =
   process.env.EXPO_PUBLIC_FAST2SMS_PHONE_NUMBER_ID?.trim() || "1281701878369604";
+
+export const FAST2SMS_ADMIN_ALERT_MESSAGE_ID =
+  process.env.EXPO_PUBLIC_FAST2SMS_ADMIN_ALERT_MESSAGE_ID?.trim() || "45414";
+
+export const ADMIN_NOTIFY_MOBILES =
+  process.env.EXPO_PUBLIC_ADMIN_NOTIFY_MOBILES?.trim() || "7867009044,9750807463";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {

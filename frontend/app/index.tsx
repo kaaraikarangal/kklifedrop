@@ -413,7 +413,8 @@ export default function Landing() {
           </View>
         </View>
 
-        {/* Support Kaarai Karangal Razorpay Card */}
+        {/*
+        // [PAYMENT_GATEWAY_APPROVAL_PENDING] Uncomment after Razorpay live gateway activation:
         <View style={styles.sectionWrap}>
           <Pressable
             testID="landing-donate-btn"
@@ -458,6 +459,7 @@ export default function Landing() {
             </View>
           </Pressable>
         </View>
+        */}
 
         {/* Emergency Alert Banner with Pulsing Icon */}
         <View style={styles.sectionWrap}>

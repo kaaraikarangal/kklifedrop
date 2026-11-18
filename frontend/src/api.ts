@@ -10,11 +10,14 @@ try {
     }
     return buf as any;
   });
-} catch {}
+} catch { }
 import {
   FAST2SMS_API_KEY,
+  FAST2SMS_OTP_ID,
   FAST2SMS_MESSAGE_ID,
   FAST2SMS_PHONE_NUMBER_ID,
+  FAST2SMS_ADMIN_ALERT_MESSAGE_ID,
+  ADMIN_NOTIFY_MOBILES,
   supabase,
   SUPABASE_URL,
 } from "./supabase";
@@ -148,10 +151,10 @@ export async function clearSession() {
     const actorId = session.mobile
       ? `user:${session.mobile}`
       : session.donorId
-      ? `donor:${session.donorId}`
-      : session.role === "admin"
-      ? "admin"
-      : null;
+        ? `donor:${session.donorId}`
+        : session.role === "admin"
+          ? "admin"
+          : null;
 
     if (actorId) {
       await recordAuditLog({
@@ -303,7 +306,7 @@ export async function getActiveSession(): Promise<ActiveSession> {
         try {
           const parsed = JSON.parse(activeAdminUserStr);
           isSuperAdmin = Boolean(parsed?.is_super_admin || parsed?.email?.toLowerCase() === SUPER_ADMIN_EMAIL);
-        } catch {}
+        } catch { }
       }
       return { isLoggedIn: true, role: "admin", mobile: null, donorId: null, token: activeToken, isSuperAdmin };
     }
@@ -319,7 +322,7 @@ export async function getActiveSession(): Promise<ActiveSession> {
           if (!activeMobile && parsed?.mobile) {
             activeMobile = parsed.mobile;
           }
-        } catch {}
+        } catch { }
       }
 
       // Self-heal session tokens and role in AsyncStorage if any key was missing
@@ -374,7 +377,7 @@ function getDonorCooldown(donor: any) {
         cooldown_total_days: intervalDays,
       };
     }
-  } catch {}
+  } catch { }
   return { in_cooldown: false, cooldown_days_left: 0, cooldown_end_date: null, cooldown_total_days: intervalDays };
 }
 
@@ -420,33 +423,75 @@ function toAdminDonor(doc: any) {
 // WhatsApp OTP delivery — Template API (primary) → Session TEXT (fallback)
 // ---------------------------------------------------------------------------
 export function getBackendServerUrl(): string {
-  if (process.env.EXPO_PUBLIC_BACKEND_URL) {
-    return process.env.EXPO_PUBLIC_BACKEND_URL.replace(/\/+$/, "");
-  }
-  // Only attempt local backend fallback in web dev environment
-  if (typeof window !== "undefined" && window.location) {
-    const hostname = window.location.hostname;
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      const protocol = window.location.protocol || "http:";
-      return `${protocol}//${hostname}:8000`;
-    }
-  }
   return "";
 }
 
-type WaDeliveryResult = {
+type DeliveryResult = {
   delivered: boolean;
-  method: "template" | "session" | "failed";
+  channel: "sms" | "whatsapp";
+  method: "sms" | "template" | "session" | "failed";
   request_id?: string;
   raw?: any;
   error?: string;
 };
 
-async function sendWhatsAppOtp(mobile: string, otp: string): Promise<WaDeliveryResult> {
+async function sendSmsOtp(mobile: string, otp: string): Promise<DeliveryResult> {
   const cleanMobile = mobile.replace(/\D/g, "").slice(-10);
 
   if (!FAST2SMS_API_KEY) {
-    return { delivered: false, method: "failed", error: "API key not configured" };
+    return { delivered: false, channel: "sms", method: "failed", error: "API key not configured" };
+  }
+
+  const headers = {
+    "authorization": FAST2SMS_API_KEY,
+    "Content-Type": "application/json",
+  };
+
+  try {
+    const res = await fetch("https://www.fast2sms.com/dev/otp/send", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        mobile: cleanMobile,
+        otp_id: FAST2SMS_OTP_ID,
+        otp_expiry: 10,
+        otp_length: 6,
+        otp: otp,
+        variables_values: `${otp}|10`,
+      }),
+    });
+    const data = await res.json();
+    if (data?.return === true || data?.status_code === 200) {
+      return {
+        delivered: true,
+        channel: "sms",
+        method: "sms",
+        request_id: data.request_id,
+        raw: data,
+      };
+    }
+    return {
+      delivered: false,
+      channel: "sms",
+      method: "failed",
+      raw: data,
+      error: data?.message || "SMS delivery rejected",
+    };
+  } catch (err: any) {
+    return {
+      delivered: false,
+      channel: "sms",
+      method: "failed",
+      error: err?.message || "Failed to reach SMS service",
+    };
+  }
+}
+
+async function sendWhatsAppOtp(mobile: string, otp: string): Promise<DeliveryResult> {
+  const cleanMobile = mobile.replace(/\D/g, "").slice(-10);
+
+  if (!FAST2SMS_API_KEY) {
+    return { delivered: false, channel: "whatsapp", method: "failed", error: "API key not configured" };
   }
 
   const headers = {
@@ -471,6 +516,7 @@ async function sendWhatsAppOtp(mobile: string, otp: string): Promise<WaDeliveryR
     if (templateData?.return === true) {
       return {
         delivered: true,
+        channel: "whatsapp",
         method: "template",
         request_id: templateData.request_id,
         raw: templateData,
@@ -482,7 +528,7 @@ async function sendWhatsAppOtp(mobile: string, otp: string): Promise<WaDeliveryR
 
   // ── 2. Fallback: SESSION TEXT API via secure POST ─────────────────────────
   try {
-    const messageText = `${otp} is your KK Life Drop verification code. For your security, do not share this code.`;
+    const messageText = `Your OTP for verification on KK Life Drop is ${otp}. Valid for 10 minutes. Please do not share this OTP with anyone. - Kaarai Karangal Samooga Sevai Amaippu`;
     const sessionRes = await fetch("https://www.fast2sms.com/dev/whatsapp-session", {
       method: "POST",
       headers,
@@ -498,6 +544,7 @@ async function sendWhatsAppOtp(mobile: string, otp: string): Promise<WaDeliveryR
     if (sessionData?.return === true) {
       return {
         delivered: true,
+        channel: "whatsapp",
         method: "session",
         request_id: sessionData.request_id,
         raw: sessionData,
@@ -509,9 +556,106 @@ async function sendWhatsAppOtp(mobile: string, otp: string): Promise<WaDeliveryR
 
   return {
     delivered: false,
+    channel: "whatsapp",
     method: "failed",
     error: "WhatsApp delivery pending. Please try again.",
   };
+}
+
+/**
+ * Dispatches an automated WhatsApp notification to administrators when a new blood request is created.
+ * Uses Meta-approved template "admin_blood_request_alert" (Message ID: 45387) via Fast2SMS.
+ */
+export async function notifyAdminNewBloodRequest(br: any): Promise<{ ok: boolean; source?: string; error?: any }> {
+  if (!br) return { ok: false, error: "Empty request object" };
+
+  // 1. First attempt via Supabase Edge Function (serverless backend)
+  try {
+    const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("notify-admin", {
+      body: { request: br },
+    });
+    if (!edgeErr && edgeRes?.ok) {
+      return { ok: true, source: "edge_function" };
+    }
+  } catch (edgeCatch) {
+    console.warn("[notifyAdmin] Edge Function fallback:", edgeCatch);
+  }
+
+  // 2. Direct client-side Fast2SMS WhatsApp dispatch fallback
+  try {
+    const reqId = String(br.request_number || br.id || "KK-BR").trim();
+    const patientName = String(br.patient_name || "Patient").trim();
+    const bloodGroup = String(br.blood_group || "Blood").trim();
+    const units = `${br.units_required || 1} Unit(s)`;
+    const hospital = `${br.hospital_name || "Hospital"}${br.hospital_area ? `, ${br.hospital_area}` : br.hospital_city ? `, ${br.hospital_city}` : ""
+      }`.trim();
+    const urgency = String(br.urgency || "Normal").trim();
+    const requester = `${br.requester_name || "Requester"} (${(br.requester_mobile || "").replace(/\D/g, "").slice(-10) || "N/A"
+      })`.trim();
+
+    // 7 variables: {{1}}..{{7}} matching template admin_blood_request_alert (Message ID: 45387)
+    const variablesValues = `${reqId}|${patientName}|${bloodGroup}|${units}|${hospital}|${urgency}|${requester}`;
+
+    // Query active sub-admins who opted in for blood alerts
+    let recipientMobiles: string[] = [];
+    const excludedMobiles = new Set<string>();
+    try {
+      const { data: dbAdmins } = await supabase
+        .from("admin_users")
+        .select("mobile, receive_blood_alerts, status")
+        .eq("status", "active")
+        .eq("receive_blood_alerts", true)
+        .not("mobile", "is", null);
+
+      if (dbAdmins && dbAdmins.length > 0) {
+        recipientMobiles = dbAdmins
+          .map((a: any) => (a.mobile || "").replace(/\D/g, "").slice(-10))
+          .filter((m: string) => m.length === 10);
+      }
+
+      const { data: optedOut } = await supabase
+        .from("admin_users")
+        .select("mobile")
+        .eq("receive_blood_alerts", false)
+        .not("mobile", "is", null);
+
+      for (const o of optedOut || []) {
+        const clean = (o.mobile || "").replace(/\D/g, "").slice(-10);
+        if (clean) excludedMobiles.add(clean);
+      }
+    } catch { }
+
+    const envAdmins = ADMIN_NOTIFY_MOBILES.split(",")
+      .map((m: string) => m.replace(/\D/g, "").slice(-10))
+      .filter((m: string) => m.length === 10);
+
+    const baseList: string[] = recipientMobiles.length > 0 ? recipientMobiles : envAdmins;
+    const adminMobiles: string[] = Array.from(new Set(baseList)).filter((m: string) => !excludedMobiles.has(m));
+
+    for (const mobile of adminMobiles) {
+      try {
+        const queryParams = new URLSearchParams({
+          authorization: FAST2SMS_API_KEY,
+          message_id: FAST2SMS_ADMIN_ALERT_MESSAGE_ID,
+          numbers: mobile,
+          variables_values: variablesValues,
+        });
+
+        await fetch(`https://www.fast2sms.com/dev/whatsapp?${queryParams.toString()}`, {
+          method: "GET",
+          headers: {
+            authorization: FAST2SMS_API_KEY,
+          },
+        });
+      } catch (directErr) {
+        console.warn(`[notifyAdmin] Direct WhatsApp send failed for ${mobile}:`, directErr);
+      }
+    }
+    return { ok: true, source: "direct_fast2sms" };
+  } catch (err) {
+    console.warn("[notifyAdmin] Notification error:", err);
+    return { ok: false, error: err };
+  }
 }
 
 /**
@@ -735,7 +879,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       amount: amt,
       amount_paise: Math.round(amt * 100),
       currency: "INR",
-      key_id: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_51KaaraiKarangal",
+      key_id: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_TpLQRMCwHpLJxc",
       organization: "Kaarai Karangal Samooga Sevai Amaippu",
       registration_no: "Reg. No. 31/2025",
       purpose: body?.purpose || "Emergency Blood Logistics & Patient Care",
@@ -892,31 +1036,36 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     } as unknown as T;
   }
 
-  // 4. Send OTP via Fast2SMS WhatsApp API (Edge Function / Serverless first)
+  // 4. Send OTP via Fast2SMS SMS API (with WhatsApp fallback)
   if (route === "auth/send-otp" || route === "api/auth/send-otp") {
     const cleanMobile = (body.mobile || "").replace(/\D/g, "").slice(-10);
     if (cleanMobile.length !== 10) {
       throw new Error("Enter a valid 10-digit mobile number");
     }
+    const reqChannel: "sms" | "whatsapp" = body.channel === "whatsapp" ? "whatsapp" : "sms";
 
     // 1. 100% Serverless via Supabase Edge Function (Zero Server Needed)
     try {
       const { data: edgeData, error: edgeErr } = await supabase.functions.invoke("send-otp", {
-        body: { mobile: cleanMobile },
+        body: { mobile: cleanMobile, channel: reqChannel },
       });
       if (edgeErr) {
         let msg = edgeErr.message;
         try {
           const errBody = await (edgeErr as any).context?.json?.();
           if (errBody?.error) msg = errBody.error;
-        } catch {}
+        } catch { }
         throw new Error(msg);
       }
       if (edgeData && edgeData.ok) {
         return {
           ok: true,
-          message: edgeData.message || "Verification code sent to your WhatsApp successfully",
-          provider: "whatsapp",
+          message: edgeData.message || (edgeData.channel === "sms" ? "Verification code sent via SMS successfully" : "Verification code sent to your WhatsApp successfully"),
+          channel: edgeData.channel || reqChannel,
+          provider: edgeData.channel || reqChannel,
+          fallback_used: Boolean(edgeData.fallback_used),
+          delivered: Boolean(edgeData.delivered),
+          sms_delivered: Boolean(edgeData.sms_delivered),
           whatsapp_delivered: Boolean(edgeData.whatsapp_delivered),
         } as unknown as T;
       }
@@ -924,38 +1073,6 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (edgeEx?.message && !edgeEx.message.includes("FunctionsFetchError")) {
         throw edgeEx;
       }
-    }
-
-    // 2. Try sending through local/hosted backend server if available
-    const backendUrl = getBackendServerUrl();
-    try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 6000);
-      const res = await fetch(`${backendUrl}/api/auth/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mobile: cleanMobile }),
-        signal: ctrl.signal,
-      });
-      clearTimeout(tid);
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          ok: true,
-          message: data.message || "Verification code sent to your WhatsApp successfully",
-          provider: "whatsapp",
-          whatsapp_delivered: true,
-        } as unknown as T;
-      }
-      const errJson = await res.json().catch(() => null);
-      if (errJson?.detail) {
-        throw new Error(errJson.detail);
-      }
-    } catch (err: any) {
-      if (err.message && !err.message.includes("fetch") && !err.message.includes("abort") && !err.message.includes("Network")) {
-        throw err;
-      }
-      // If backend server unreachable, proceed with standalone Supabase dispatch
     }
 
     // Rate-limiting check
@@ -984,7 +1101,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     // 6-digit cryptographically random OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     // Securely hash OTP before database storage (never store plaintext OTP in database)
     const otpHash = bcrypt.hashSync(otp, 8);
 
@@ -996,8 +1113,20 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       expires_at: expiresAt,
     });
 
-    // Call Fast2SMS WhatsApp endpoint via secure POST (template → session fallback)
-    const waResult = await sendWhatsAppOtp(cleanMobile, otp);
+    // Primary: SMS OTP delivery via Fast2SMS
+    // Fallback: WhatsApp delivery if SMS fails or user requested WhatsApp
+    let deliveryRes: DeliveryResult;
+    let fallbackUsed = false;
+
+    if (reqChannel !== "whatsapp") {
+      deliveryRes = await sendSmsOtp(cleanMobile, otp);
+      if (!deliveryRes.delivered) {
+        fallbackUsed = true;
+        deliveryRes = await sendWhatsAppOtp(cleanMobile, otp);
+      }
+    } else {
+      deliveryRes = await sendWhatsAppOtp(cleanMobile, otp);
+    }
 
     await recordAuditLog({
       actor: `user:${cleanMobile}`,
@@ -1006,22 +1135,31 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       target_id: cleanMobile,
       metadata: {
         mobile: cleanMobile,
-        provider: "whatsapp",
-        method: waResult.method,
-        delivered: waResult.delivered,
+        channel: deliveryRes.channel,
+        method: deliveryRes.method,
+        delivered: deliveryRes.delivered,
+        fallback_used: fallbackUsed,
       },
     });
 
-    const successMsg = waResult.delivered
-      ? "Verification code sent to your WhatsApp successfully"
-      : "Verification code generated — check your WhatsApp";
+    let successMsg = "Verification code dispatched successfully";
+    if (deliveryRes.channel === "sms" && deliveryRes.delivered) {
+      successMsg = "Verification code sent via SMS successfully";
+    } else if (deliveryRes.channel === "whatsapp" && deliveryRes.delivered) {
+      successMsg = fallbackUsed
+        ? "SMS delivery unavailable. Verification code sent via WhatsApp successfully"
+        : "Verification code sent to your WhatsApp successfully";
+    }
 
     return {
       ok: true,
       message: successMsg,
-      provider: "whatsapp",
-      whatsapp_delivered: waResult.delivered,
-      whatsapp_method: waResult.method,
+      channel: deliveryRes.channel,
+      provider: deliveryRes.channel,
+      fallback_used: fallbackUsed,
+      delivered: deliveryRes.delivered,
+      sms_delivered: deliveryRes.channel === "sms" && deliveryRes.delivered,
+      whatsapp_delivered: deliveryRes.channel === "whatsapp" && deliveryRes.delivered,
     } as unknown as T;
   }
 
@@ -1049,47 +1187,14 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         try {
           const errBody = await (edgeErr as any).context?.json?.();
           if (errBody?.error) msg = errBody.error;
-        } catch {}
+        } catch { }
         throw new Error(msg);
       }
     } catch (edgeEx: any) {
       if (edgeEx?.message && !edgeEx.message.includes("FunctionsFetchError")) {
         throw edgeEx;
       }
-      // Edge function not yet deployed; fall through to backend or direct Supabase
-    }
-
-    // 2. Try verifying through backend server
-    const backendUrl = getBackendServerUrl();
-    try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 6000);
-      const res = await fetch(`${backendUrl}/api/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mobile: cleanMobile, otp: otpInput }),
-        signal: ctrl.signal,
-      });
-      clearTimeout(tid);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.token) {
-          await setSession(data.token, "user", cleanMobile);
-        }
-        if (data.donor) {
-          await AsyncStorage.setItem(DONOR_KEY, JSON.stringify(data.donor));
-        }
-        return data as T;
-      }
-      const errJson = await res.json().catch(() => null);
-      if (errJson?.detail) {
-        throw new Error(errJson.detail);
-      }
-    } catch (err: any) {
-      if (err.message && !err.message.includes("fetch") && !err.message.includes("abort") && !err.message.includes("Network")) {
-        throw err;
-      }
-      // If backend server unreachable, fall through to direct Supabase verification
+      // Fall through to direct Supabase verification if needed
     }
 
     const { data: otpRecords, error: otpErr } = await supabase
@@ -1202,7 +1307,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         try {
           const errBody = await (edgeErr as any).context?.json?.();
           if (errBody?.error) msg = errBody.error;
-        } catch {}
+        } catch { }
         if (msg && (msg.includes("Invalid administrator") || msg.includes("suspended") || msg.includes("Access Denied"))) {
           throw new Error(msg);
         }
@@ -1593,7 +1698,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
             const parsed = JSON.parse(cachedStr);
             donorId = parsed?.id || null;
           }
-        } catch {}
+        } catch { }
       }
 
       if (!donorId && cleanMobile.length === 10) {
@@ -1630,7 +1735,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
             const parsed = JSON.parse(adminStr);
             adminEmail = parsed?.email || null;
           }
-        } catch {}
+        } catch { }
       }
 
       const targetType = donorId ? "donor" : adminEmail ? "admin" : "device";
@@ -1758,6 +1863,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
       const assignedNumber = data?.request_number || requestNumber;
 
+      // Automatically dispatch WhatsApp alert to Admin (Fast2SMS Template admin_blood_request_alert)
+      notifyAdminNewBloodRequest(data || insertData).catch((notifyErr) =>
+        console.warn("[BloodRequest] Admin WhatsApp notify error:", notifyErr)
+      );
+
       await recordAuditLog({
         actor: `user:${insertData.requester_mobile}`,
         action: "create_blood_request",
@@ -1811,6 +1921,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
     const { data } = await supabase.from("blood_requests").insert(insertData).select().single();
     const assignedNumber = data?.request_number || requestNumber;
+
+    // Automatically dispatch WhatsApp alert to Admin (Fast2SMS Template admin_blood_request_alert)
+    notifyAdminNewBloodRequest(data || insertData).catch((notifyErr) =>
+      console.warn("[ContactDonor] Admin WhatsApp notify error:", notifyErr)
+    );
 
     await recordAuditLog({
       actor: `user:${insertData.requester_mobile}`,
@@ -2142,7 +2257,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           const parsed = JSON.parse(cachedStr);
           donorId = parsed?.id || null;
         }
-      } catch {}
+      } catch { }
     }
 
     if (!donorId) return { notifications: [] } as unknown as T;
@@ -2822,7 +2937,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     let currentAdmin: any = null;
     const rawAdm = (await AsyncStorage.getItem(ADMIN_USER_KEY)) || (await AsyncStorage.getItem(LEGACY_ADMIN_USER_KEY));
     if (rawAdm) {
-      try { currentAdmin = JSON.parse(rawAdm); } catch {}
+      try { currentAdmin = JSON.parse(rawAdm); } catch { }
     }
     return { ok: true, admin: currentAdmin || admin } as unknown as T;
   }
@@ -2837,7 +2952,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     let currentAdmin: any = null;
     const rawAdm = await AsyncStorage.getItem(ADMIN_USER_KEY);
     if (rawAdm) {
-      try { currentAdmin = JSON.parse(rawAdm); } catch {}
+      try { currentAdmin = JSON.parse(rawAdm); } catch { }
     }
     if (!currentAdmin || !currentAdmin.email) {
       throw new Error("Admin authentication required. Please sign in.");
@@ -2865,11 +2980,11 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           });
           return { ok: true, admins: enriched, is_super_admin: isSuperAdmin } as unknown as T;
         }
-      } catch {}
+      } catch { }
 
       const { data: adminsList, error: admErr } = await supabase
         .from("admin_users")
-        .select("id, name, email, status, created_at")
+        .select("id, name, email, mobile, receive_blood_alerts, status, created_at")
         .order("created_at", { ascending: true });
 
       if (admErr) throw new Error(admErr.message);
@@ -2881,6 +2996,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           role: isSuper ? "super_admin" : "sub_admin",
           role_label: isSuper ? "Super Admin" : "Sub-Admin",
           is_super_admin: isSuper,
+          receive_blood_alerts: a.receive_blood_alerts !== false,
         };
       });
 
@@ -2896,6 +3012,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const name = (body.name || "").trim();
       const email = (body.email || "").trim().toLowerCase();
       const password = (body.password || "").trim();
+      const mobile = (body.mobile || "").replace(/\D/g, "").slice(-10) || null;
+      const receive_blood_alerts = body.receive_blood_alerts !== false;
 
       if (!name) throw new Error("Please enter sub-admin's full name");
       if (!email || !email.includes("@")) throw new Error("Please enter a valid email address");
@@ -2903,7 +3021,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
       try {
         const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
-          body: { action: "create_sub_admin", name, email, password, admin_email: currentAdmin?.email },
+          body: { action: "create_sub_admin", name, email, password, mobile, receive_blood_alerts, admin_email: currentAdmin?.email },
         });
         if (!edgeErr && edgeRes?.ok) {
           return {
@@ -2914,6 +3032,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
               role: "sub_admin",
               role_label: "Sub-Admin",
               is_super_admin: false,
+              receive_blood_alerts,
             },
           } as unknown as T;
         }
@@ -2922,7 +3041,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           try {
             const errBody = await (edgeErr as any).context?.json?.();
             if (errBody?.error) msg = errBody.error;
-          } catch {}
+          } catch { }
           if (msg) throw new Error(msg);
         }
       } catch (e: any) {
@@ -2946,10 +3065,12 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         .insert({
           name,
           email,
+          mobile,
+          receive_blood_alerts,
           password_hash,
           status: "active",
         })
-        .select("id, name, email, status, created_at")
+        .select("id, name, email, mobile, receive_blood_alerts, status, created_at")
         .single();
 
       if (createErr) throw new Error(createErr.message);
@@ -2964,6 +3085,8 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
         metadata: {
           created_sub_admin_email: email,
           created_sub_admin_name: name,
+          mobile,
+          receive_blood_alerts,
           created_by: currentAdmin?.email || SUPER_ADMIN_EMAIL,
         },
       });
@@ -2976,11 +3099,12 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           role: "sub_admin",
           role_label: "Sub-Admin",
           is_super_admin: false,
+          receive_blood_alerts,
         },
       } as unknown as T;
     }
 
-    // PATCH: Toggle active/suspended status (Super Admin only)
+    // PATCH: Toggle active/suspended status or blood alert preferences (Super Admin only)
     if (method === "PATCH") {
       if (!isSuperAdmin) {
         throw new Error("Access Denied: Only Super Admin can modify sub-admin access.");
@@ -2989,55 +3113,44 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       const targetId = body.admin_id || body.id;
       if (!targetId) throw new Error("Admin ID is required");
 
-      const newStatus = body.status || "suspended";
+      const updates: any = {};
+      if (body.status !== undefined) updates.status = body.status;
+      if (body.receive_blood_alerts !== undefined) updates.receive_blood_alerts = Boolean(body.receive_blood_alerts);
+      if (body.mobile !== undefined) updates.mobile = String(body.mobile).replace(/\D/g, "").slice(-10) || null;
+      if (body.name !== undefined) updates.name = String(body.name).trim();
+
+      const action = body.receive_blood_alerts !== undefined && Object.keys(updates).length === 1
+        ? "toggle_alerts"
+        : "update_status";
 
       try {
         const { data: edgeRes, error: edgeErr } = await supabase.functions.invoke("admin-auth", {
-          body: { action: "update_status", target_id: targetId, status: newStatus, admin_email: currentAdmin?.email },
+          body: { action, target_id: targetId, ...updates, admin_email: currentAdmin?.email },
         });
         if (!edgeErr && edgeRes?.ok) {
-          return { ok: true, status: newStatus, message: `Admin status set to ${newStatus}` } as unknown as T;
+          return { ok: true, ...updates, message: "Sub-Admin updated successfully" } as unknown as T;
         }
-        if (edgeErr) {
-          let msg = edgeErr.message;
-          try {
-            const errBody = await (edgeErr as any).context?.json?.();
-            if (errBody?.error) msg = errBody.error;
-          } catch {}
-          if (msg) throw new Error(msg);
-        }
-      } catch (e: any) {
-        if (e?.message && e.message.includes("Forbidden")) throw e;
-      }
+      } catch { }
 
-      const { data: target } = await supabase
+      const { data: upd, error: updErr } = await supabase
         .from("admin_users")
-        .select("id, email, status, name")
+        .update(updates)
         .eq("id", targetId)
+        .select("id, name, email, mobile, receive_blood_alerts, status, created_at")
         .single();
 
-      if (!target) throw new Error("Admin not found");
-      if (target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
-        throw new Error("Action Forbidden: Super Admin account cannot be suspended.");
-      }
-
-      await supabase.from("admin_users").update({ status: newStatus }).eq("id", targetId);
+      if (updErr) throw new Error(updErr.message);
 
       await supabase.from("audit_logs").insert({
         admin_id: currentAdmin?.email || SUPER_ADMIN_EMAIL,
-        action: "toggle_admin_status",
+        action: updates.receive_blood_alerts !== undefined ? "update_sub_admin_alerts" : "update_sub_admin_status",
         target_type: "sub_admin",
         target_id: targetId,
         timestamp: new Date().toISOString(),
-        metadata: {
-          target_email: target.email,
-          target_name: target.name,
-          new_status: newStatus,
-          modified_by: currentAdmin?.email || SUPER_ADMIN_EMAIL,
-        },
+        metadata: updates,
       });
 
-      return { ok: true, status: newStatus, message: `Admin status set to ${newStatus}` } as unknown as T;
+      return { ok: true, admin: upd, ...updates } as unknown as T;
     }
 
     // DELETE: Delete sub-admin (Super Admin only)
@@ -3061,7 +3174,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
           try {
             const errBody = await (edgeErr as any).context?.json?.();
             if (errBody?.error) msg = errBody.error;
-          } catch {}
+          } catch { }
           if (msg) throw new Error(msg);
         }
       } catch (e: any) {
