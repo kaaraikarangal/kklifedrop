@@ -343,8 +343,15 @@ export default function Profile() {
         onPress={() => router.push("/developer")}
       >
         <View style={styles.navRowLeft}>
-          <Ionicons name="code-slash-outline" size={18} color={colors.onSurface} />
-          <Text style={styles.navRowTitle}>Developer Information</Text>
+          <Image
+            source={require("@/assets/images/pyrow_logo.jpg")}
+            style={{ width: 22, height: 22, borderRadius: 6 }}
+            resizeMode="cover"
+          />
+          <View style={{ marginLeft: 4 }}>
+            <Text style={styles.navRowTitle}>Developer Information</Text>
+            <Text style={{ fontSize: 11, color: colors.muted }}>Pyrow Softwares (pyrow.in)</Text>
+          </View>
         </View>
         <Ionicons name="chevron-forward" size={18} color={colors.muted} />
       </Pressable>
@@ -384,6 +391,21 @@ export default function Profile() {
       <Pressable testID="delete-account-btn" onPress={confirmDeleteAccount} style={styles.deleteBtn}>
         <Ionicons name="trash-outline" size={16} color={colors.error} />
         <Text style={{ color: colors.error, fontWeight: "700", fontSize: 13 }}>Delete My Account & Personal Data</Text>
+      </Pressable>
+
+      {/* Pyrow Softwares Developer Branding Footer */}
+      <Pressable
+        onPress={() => router.push("/developer")}
+        style={{ alignItems: "center", marginTop: 24, marginBottom: 8 }}
+      >
+        <Image
+          source={require("@/assets/images/pyrow_banner.png")}
+          style={{ width: 110, height: 26 }}
+          resizeMode="contain"
+        />
+        <Text style={{ fontSize: 11, color: colors.muted, marginTop: 4, fontWeight: "600" }}>
+          Engineered by Pyrow Softwares • https://pyrow.in
+        </Text>
       </Pressable>
 
       {/* Kaarai Karangal Razorpay Donation Modal */}
