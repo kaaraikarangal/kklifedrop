@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -75,7 +75,23 @@ export default function DonorContact() {
     finally { setLoading(false); }
   }
 
-  if (!donor) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
+  if (!donor) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top + 12, paddingHorizontal: spacing.lg }}>
+        <Pressable
+          onPress={() => safeBack("/(tabs)/donors")}
+          style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: colors.surfaceSecondary, marginBottom: spacing.md }}
+          hitSlop={8}
+        >
+          <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+        </Pressable>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="large" color={colors.brandPrimary} />
+          <Text style={{ marginTop: 12, color: colors.muted, fontSize: 13 }}>Loading donor information...</Text>
+        </View>
+      </View>
+    );
+  }
 
   if (done) {
     return (

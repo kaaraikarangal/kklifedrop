@@ -7,6 +7,7 @@ import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { BrandLogo } from "@/src/components/BrandLogo";
 import { KaaraiKarangalDonationModal } from "@/src/components/KaaraiKarangalDonationModal";
+import { safeBack } from "@/src/navigation";
 
 export default function DonateScreen() {
   const insets = useSafeAreaInsets();
@@ -17,7 +18,7 @@ export default function DonateScreen() {
     <View style={{ flex: 1, backgroundColor: "#F8FAFC" }}>
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
+        <Pressable style={styles.backBtn} onPress={() => safeBack("/(tabs)/home")} hitSlop={8}>
           <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
         </Pressable>
         <BrandLogo variant="horizontal" size="sm" />

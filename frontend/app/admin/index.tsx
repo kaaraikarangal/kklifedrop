@@ -15,6 +15,7 @@ import {
   Platform,
   Image,
   Switch,
+  KeyboardAvoidingView,
 } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -560,6 +561,7 @@ export default function AdminHome() {
     try {
       await api("/admin/sub-admins", {
         method: "POST",
+        auth: true,
         body: {
           name: createAdminModal.name.trim(),
           email: createAdminModal.email.trim(),
@@ -588,6 +590,7 @@ export default function AdminHome() {
       const nextAlerts = !currentAlerts;
       await api("/admin/sub-admins", {
         method: "PATCH",
+        auth: true,
         body: { admin_id: adminId, receive_blood_alerts: nextAlerts },
       });
       toast("success", "Alert Settings Updated", `WhatsApp alerts ${nextAlerts ? "Enabled" : "Disabled"} for ${adminName}`);
@@ -605,6 +608,7 @@ export default function AdminHome() {
     try {
       await api("/admin/sub-admins", {
         method: "PATCH",
+        auth: true,
         body: {
           admin_id: editAdminModal.adminId,
           name: editAdminModal.name.trim(),
@@ -628,6 +632,7 @@ export default function AdminHome() {
       const newStatus = currentStatus === "active" ? "suspended" : "active";
       await api("/admin/sub-admins", {
         method: "PATCH",
+        auth: true,
         body: { admin_id: adminId, status: newStatus },
       });
       toast("info", "Status Updated", `${adminName} status is now ${newStatus}`);
@@ -664,6 +669,7 @@ export default function AdminHome() {
     try {
       await api("/admin/sub-admins", {
         method: "DELETE",
+        auth: true,
         body: { admin_id: adminId },
       });
       toast("success", "Deleted", `Sub-admin ${adminName} has been removed.`);
@@ -3550,7 +3556,7 @@ export default function AdminHome() {
         <View style={styles.modalBg}>
           <View style={styles.matchModalContainer} testID="match-modal">
             <View style={styles.matchModalHead}>
-              <View>
+              <View style={{ flex: 1, paddingRight: 8 }}>
                 <Text style={styles.matchModalTitle}>Smart Donor Matching</Text>
                 <Text style={styles.matchModalSub}>
                   For {matchModal.request?.patient_name} ({matchModal.request?.blood_group}) • {matchModal.request?.hospital_name}
@@ -4067,13 +4073,13 @@ export default function AdminHome() {
         <View style={styles.modalBg}>
           <View style={styles.modalCardLarge} testID="admin-add-donation-modal">
             <View style={styles.modalCardHeader}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1, marginRight: 8 }}>
                 <View style={[styles.modalIconCircle, { backgroundColor: "#FEE2E2" }]}>
                   <Ionicons name="water" size={20} color="#DC2626" />
                 </View>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.modalTitleText}>Record Blood Donation</Text>
-                  <Text style={styles.modalSubText}>Logs donation into registry & applies rest period</Text>
+                  <Text style={styles.modalSubText} numberOfLines={1}>Logs donation into registry & applies rest period</Text>
                 </View>
               </View>
               <Pressable onPress={() => setAddRecordModal((prev) => ({ ...prev, open: false }))} hitSlop={8}>
@@ -4893,35 +4899,40 @@ export default function AdminHome() {
         animationType="fade"
         onRequestClose={() => setEditAdminModal((p) => ({ ...p, open: false }))}
       >
-        <View style={styles.modalBg}>
-          <View style={[styles.createSubAdminCard, isMobile && { width: "95%", maxWidth: 440 }]}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalBg}
+        >
+          <View style={[styles.createSubAdminCard, { width: "100%", maxWidth: 460 }]}>
             {/* Header */}
             <View style={styles.createSubAdminHeader}>
               <View style={styles.createSubAdminHeaderLeft}>
                 <View style={[styles.createSubAdminHeaderIconWrap, { backgroundColor: "#EFF6FF" }]}>
                   <Ionicons name="create-outline" size={22} color="#2563EB" />
                 </View>
-                <View style={{ marginLeft: 12 }}>
-                  <Text style={styles.createSubAdminTitle}>Edit Sub-Admin Details</Text>
-                  <Text style={styles.createSubAdminSubtitle}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.createSubAdminTitle} numberOfLines={1}>Edit Sub-Admin Details</Text>
+                  <Text style={styles.createSubAdminSubtitle} numberOfLines={1}>
                     {editAdminModal.email}
                   </Text>
                 </View>
               </View>
 
               <Pressable
-                style={styles.modalCloseBtn}
+                style={styles.modalCloseCircleBtn}
                 onPress={() => setEditAdminModal((p) => ({ ...p, open: false }))}
                 hitSlop={8}
+                testID="close-edit-subadmin-modal"
               >
                 <Ionicons name="close" size={20} color="#64748B" />
               </Pressable>
             </View>
 
             <ScrollView
-              style={styles.createSubAdminBody}
-              contentContainerStyle={{ paddingBottom: 6 }}
+              style={{ flexShrink: 1, maxHeight: 420 }}
+              contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 18, paddingBottom: 16 }}
               keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
             >
               {/* Full Name */}
               <View style={styles.formGroup}>
@@ -5011,7 +5022,7 @@ export default function AdminHome() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ========================================================================= */}
@@ -6865,7 +6876,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15, 23, 42, 0.6)",
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.lg,
+    padding: spacing.md,
   },
   modal: {
     backgroundColor: "#FFFFFF",
@@ -8488,6 +8499,7 @@ const styles = StyleSheet.create({
   createSubAdminBody: {
     paddingHorizontal: 22,
     paddingTop: 18,
+    flexShrink: 1,
   },
   roleNoticeCard: {
     flexDirection: "row",
@@ -9227,6 +9239,7 @@ const styles = StyleSheet.create({
   modalCardLarge: {
     width: "100%",
     maxWidth: 540,
+    maxHeight: "92%",
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: spacing.lg,

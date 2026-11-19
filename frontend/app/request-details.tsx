@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -17,7 +17,23 @@ export default function RequestDetails() {
     api(`/blood-requests/${id}`).then((x: any) => setR(x.request)).catch(() => {});
   }, [id]);
 
-  if (!r) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
+  if (!r) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top + 12, paddingHorizontal: spacing.lg }}>
+        <Pressable
+          onPress={() => safeBack("/(tabs)/requests")}
+          style={styles.back}
+          hitSlop={8}
+        >
+          <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+        </Pressable>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="large" color={colors.brandPrimary} />
+          <Text style={{ marginTop: 12, color: colors.muted, fontSize: 13 }}>Loading blood request details...</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.surface }} contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }}>

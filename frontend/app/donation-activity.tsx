@@ -20,6 +20,7 @@ import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api";
 import { BloodGroupBadge } from "@/src/components/BloodGroupBadge";
 import { toast } from "@/src/Toast";
+import { safeBack } from "@/src/navigation";
 import { DatePickerField } from "@/src/components/DatePickerField";
 import { formatDateToDDMMYYYY, formatDateToYYYYMMDD } from "@/src/utils/dateUtils";
 import {
@@ -200,7 +201,7 @@ export default function DonationActivityScreen() {
       <View style={styles.header}>
         <Pressable
           style={styles.backBtn}
-          onPress={() => router.back()}
+          onPress={() => safeBack("/(tabs)/profile")}
           hitSlop={10}
           testID="btn-back-profile"
         >

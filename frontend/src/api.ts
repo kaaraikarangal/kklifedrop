@@ -2939,7 +2939,7 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     route === "api/admin/admins"
   ) {
     let currentAdmin: any = null;
-    const rawAdm = await AsyncStorage.getItem(ADMIN_USER_KEY);
+    const rawAdm = (await AsyncStorage.getItem(ADMIN_USER_KEY)) || (await AsyncStorage.getItem(LEGACY_ADMIN_USER_KEY));
     if (rawAdm) {
       try { currentAdmin = JSON.parse(rawAdm); } catch { }
     }
@@ -3108,7 +3108,9 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
       if (body.mobile !== undefined) updates.mobile = String(body.mobile).replace(/\D/g, "").slice(-10) || null;
       if (body.name !== undefined) updates.name = String(body.name).trim();
 
-      const action = body.receive_blood_alerts !== undefined && Object.keys(updates).length === 1
+      const action = body.name !== undefined || body.mobile !== undefined
+        ? "update_sub_admin"
+        : body.receive_blood_alerts !== undefined && Object.keys(updates).length === 1
         ? "toggle_alerts"
         : "update_status";
 

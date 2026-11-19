@@ -15,6 +15,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { colors, radius, spacing } from "@/src/theme";
 import { toast } from "@/src/Toast";
+import { safeBack } from "@/src/navigation";
 import {
   BLOOD_FREQUENCY_DATA,
   BLOOD_FACT_CATEGORIES,
@@ -76,7 +77,7 @@ export default function BloodFactsScreen() {
       <View style={styles.header}>
         <Pressable
           style={styles.backBtn}
-          onPress={() => router.back()}
+          onPress={() => safeBack("/(tabs)/home")}
           testID="blood-facts-back-btn"
           accessibilityLabel="Go back"
         >
