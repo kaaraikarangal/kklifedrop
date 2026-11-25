@@ -1257,6 +1257,10 @@ export default function AdminHome() {
       toast("error", "Date Required", "Please select a donation date");
       return;
     }
+    if (!addRecordProofImage) {
+      toast("error", "Donation Proof Required", "Donation proof photo / certificate is required to record a donation.");
+      return;
+    }
     setAddRecordModal((prev) => ({ ...prev, submitting: true }));
     try {
       let uploadedCertificateUrl: string | null = null;
@@ -4193,7 +4197,7 @@ export default function AdminHome() {
             {/* Donation Proof / Certificate Image Upload */}
             <View style={{ marginBottom: 14 }}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <Text style={styles.inputLabel}>Donation Proof / Certificate Photo</Text>
+                <Text style={styles.inputLabel}>Donation Proof / Certificate Photo *</Text>
                 <Text style={{ fontSize: 10, color: "#059669", fontWeight: "700" }}>Verified</Text>
               </View>
 

@@ -127,6 +127,7 @@ export default function DonationActivityScreen() {
       const res = await pickDonationProofImage();
       if (!res.cancelled && res.uri) {
         setProofImage({ uri: res.uri, base64: res.base64 });
+        setModalErrors((prev) => ({ ...prev, proof: "" }));
       }
     } catch (e: any) {
       toast("error", "Gallery Error", e.message || "Failed to pick image");
@@ -138,6 +139,7 @@ export default function DonationActivityScreen() {
       const res = await takeDonationProofPhoto();
       if (!res.cancelled && res.uri) {
         setProofImage({ uri: res.uri, base64: res.base64 });
+        setModalErrors((prev) => ({ ...prev, proof: "" }));
       }
     } catch (e: any) {
       toast("error", "Camera Error", e.message || "Failed to open camera");
@@ -152,10 +154,17 @@ export default function DonationActivityScreen() {
     if (!donationHospital?.trim()) {
       newErrors.hospital = "Hospital or Blood bank name is required";
     }
+    if (!proofImage) {
+      newErrors.proof = "Donation proof photo / certificate is required";
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setModalErrors(newErrors);
-      toast("error", "Incomplete Form", "Please fill in all highlighted required fields.");
+      if (!proofImage) {
+        toast("error", "Donation Proof Required", "Please attach a donation proof photo / certificate to record your donation.");
+      } else {
+        toast("error", "Incomplete Form", "Please fill in all highlighted required fields.");
+      }
       return;
     }
 
@@ -680,10 +689,14 @@ export default function DonationActivityScreen() {
             {/* Donation Proof / Certificate Image Upload */}
             <View style={{ marginBottom: 14 }}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <Text style={styles.inputLabel}>Donation Proof / Certificate Photo *</Text>
-                <View style={styles.verifiedBadge}>
-                  <Ionicons name="cloud-done" size={11} color="#059669" />
-                  <Text style={styles.verifiedBadgeText}>Verified Proof</Text>
+                <Text style={[styles.inputLabel, modalErrors.proof ? { color: "#EF4444" } : null]}>
+                  Donation Proof / Certificate Photo *
+                </Text>
+                <View style={[styles.verifiedBadge, modalErrors.proof ? { backgroundColor: "#FEE2E2" } : null]}>
+                  <Ionicons name="cloud-done" size={11} color={modalErrors.proof ? "#EF4444" : "#059669"} />
+                  <Text style={[styles.verifiedBadgeText, modalErrors.proof ? { color: "#DC2626" } : null]}>
+                    Verified Proof
+                  </Text>
                 </View>
               </View>
 
@@ -691,7 +704,7 @@ export default function DonationActivityScreen() {
                 <View style={styles.proofSelectedBox}>
                   <Image source={{ uri: proofImage.uri }} style={styles.proofPreviewThumb} resizeMode="cover" />
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.proofSelectedTitle} numberOfLines={1}>Certificate Photo Selected</Text>
+                    <Text style={styles.proofSelectedTitle} numberOfLines={1}>Certificate Photo Attached ✓</Text>
                     <Text style={styles.proofSelectedSub}>Will be uploaded securely to cloud storage</Text>
                   </View>
                   <Pressable
@@ -704,24 +717,37 @@ export default function DonationActivityScreen() {
                   </Pressable>
                 </View>
               ) : (
-                <View style={styles.proofUploadRow}>
-                  <Pressable
-                    style={styles.proofPickerBtn}
-                    onPress={handleTakeProofPhoto}
-                    disabled={submitting}
-                  >
-                    <Ionicons name="camera-outline" size={18} color={colors.brandPrimary} />
-                    <Text style={styles.proofPickerBtnText}>Take Photo</Text>
-                  </Pressable>
+                <View>
+                  <View style={styles.proofUploadRow}>
+                    <Pressable
+                      style={[
+                        styles.proofPickerBtn,
+                        modalErrors.proof ? { borderColor: "#EF4444", backgroundColor: "#FEF2F2" } : null,
+                      ]}
+                      onPress={handleTakeProofPhoto}
+                      disabled={submitting}
+                    >
+                      <Ionicons name="camera-outline" size={18} color={modalErrors.proof ? "#EF4444" : colors.brandPrimary} />
+                      <Text style={[styles.proofPickerBtnText, modalErrors.proof ? { color: "#EF4444" } : null]}>Take Photo</Text>
+                    </Pressable>
 
-                  <Pressable
-                    style={styles.proofPickerBtn}
-                    onPress={handlePickProof}
-                    disabled={submitting}
-                  >
-                    <Ionicons name="images-outline" size={18} color={colors.brandPrimary} />
-                    <Text style={styles.proofPickerBtnText}>Choose from Gallery</Text>
-                  </Pressable>
+                    <Pressable
+                      style={[
+                        styles.proofPickerBtn,
+                        modalErrors.proof ? { borderColor: "#EF4444", backgroundColor: "#FEF2F2" } : null,
+                      ]}
+                      onPress={handlePickProof}
+                      disabled={submitting}
+                    >
+                      <Ionicons name="images-outline" size={18} color={modalErrors.proof ? "#EF4444" : colors.brandPrimary} />
+                      <Text style={[styles.proofPickerBtnText, modalErrors.proof ? { color: "#EF4444" } : null]}>Choose from Gallery</Text>
+                    </Pressable>
+                  </View>
+                  {modalErrors.proof ? (
+                    <Text style={{ color: "#EF4444", fontSize: 11, fontWeight: "600", marginTop: 4 }}>
+                      {modalErrors.proof}
+                    </Text>
+                  ) : null}
                 </View>
               )}
             </View>

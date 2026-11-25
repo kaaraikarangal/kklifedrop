@@ -505,7 +505,34 @@ export default function Landing() {
             <Pressable onPress={() => router.push("/privacy")} testID="landing-privacy-btn">
               <Text style={styles.legalLinkText}>Privacy Policy</Text>
             </Pressable>
+            <Text style={styles.legalDot}>•</Text>
+            <Pressable onPress={() => router.push("/developer")} testID="landing-developer-btn">
+              <Text style={styles.legalLinkText}>Developer Info</Text>
+            </Pressable>
           </View>
+
+          {/* Pyrow Softwares Developer Branding Footer */}
+          <Pressable
+            onPress={() => router.push("/developer")}
+            style={{ alignItems: "center", marginTop: 14, marginBottom: 8 }}
+            testID="landing-pyrow-branding"
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <Image
+                source={require("@/assets/images/pyrow_logo.jpg")}
+                style={{ width: 18, height: 18, borderRadius: 5 }}
+                resizeMode="cover"
+              />
+              <Image
+                source={require("@/assets/images/pyrow_banner.png")}
+                style={{ width: 100, height: 24 }}
+                resizeMode="contain"
+              />
+            </View>
+            <Text style={{ fontSize: 11, color: colors.muted, fontWeight: "600" }}>
+              Engineered by Pyrow Softwares • https://pyrow.in
+            </Text>
+          </Pressable>
 
           <Pressable
             testID="admin-login-dot"

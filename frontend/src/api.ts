@@ -1568,13 +1568,18 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
 
   // 8b. Current Donor Blood Donation History (/donors/me/donations)
   if (route === "donors/me/donations" || route === "api/donors/me/donations") {
-    const mobile = await AsyncStorage.getItem(MOBILE_KEY);
+    let mobile = (await AsyncStorage.getItem(MOBILE_KEY)) || (await AsyncStorage.getItem(LEGACY_MOBILE_KEY));
+    if (!mobile) {
+      const sess = await getActiveSession();
+      mobile = sess?.mobile || null;
+    }
     if (!mobile) throw new Error("Not logged in");
+    const cleanMobile = mobile.replace(/\D/g, "").slice(-10);
 
     const { data: donorList } = await supabase
       .from("donors")
       .select("id, donor_number, full_name, mobile, blood_group, last_donation_date")
-      .eq("mobile", mobile)
+      .or(`mobile.eq.${cleanMobile},mobile.eq.+91${cleanMobile},mobile.eq.91${cleanMobile}`)
       .limit(1);
 
     if (!donorList || donorList.length === 0) throw new Error("Donor profile not found");
@@ -1598,6 +1603,9 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     if (method === "POST") {
       const donationDate = formatDateToYYYYMMDD(body.donation_date) || body.donation_date;
       if (!donationDate) throw new Error("Please specify a valid donation date");
+      if (!body.certificate_image_url) {
+        throw new Error("Donation proof photo / certificate is required to record donation");
+      }
 
       const insertRecord = {
         donor_id: donor.id,
@@ -2490,6 +2498,9 @@ export async function api<T = any>(path: string, opts: Opts = {}): Promise<T> {
     if (method === "POST") {
       const donationDate = formatDateToYYYYMMDD(body.donation_date) || body.donation_date;
       if (!donationDate) throw new Error("Please specify a valid donation date");
+      if (!body.certificate_image_url) {
+        throw new Error("Donation proof photo / certificate is required to record donation");
+      }
 
       const insertRecord = {
         donor_id: donor.id,

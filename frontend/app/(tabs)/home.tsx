@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, BackHandler, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, BackHandler, Platform, Image } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -607,6 +607,29 @@ export default function Home() {
             Kaarai Karangal Social Service Organization acts as a verified, confidential bridge connecting patients with volunteer donors.
           </Text>
         </View>
+
+        {/* Pyrow Softwares Developer Branding Footer */}
+        <Pressable
+          onPress={() => router.push("/developer")}
+          style={{ alignItems: "center", marginTop: 20, marginBottom: 16 }}
+          testID="home-pyrow-branding"
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <Image
+              source={require("@/assets/images/pyrow_logo.jpg")}
+              style={{ width: 18, height: 18, borderRadius: 5 }}
+              resizeMode="cover"
+            />
+            <Image
+              source={require("@/assets/images/pyrow_banner.png")}
+              style={{ width: 95, height: 22 }}
+              resizeMode="contain"
+            />
+          </View>
+          <Text style={{ fontSize: 11, color: colors.muted, fontWeight: "600" }}>
+            Engineered by Pyrow Softwares • https://pyrow.in
+          </Text>
+        </Pressable>
       </ScrollView>
 
     </View>
