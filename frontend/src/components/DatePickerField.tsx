@@ -121,7 +121,7 @@ export function DatePickerField({
         month: m,
         year: y,
         isCurrentMonth: false,
-        dateObj: new Date(y, m, day),
+        dateObj: new Date(y, m, day, 12, 0, 0),
       });
     }
 
@@ -132,7 +132,7 @@ export function DatePickerField({
         month: viewMonth,
         year: viewYear,
         isCurrentMonth: true,
-        dateObj: new Date(viewYear, viewMonth, i),
+        dateObj: new Date(viewYear, viewMonth, i, 12, 0, 0),
       });
     }
 
@@ -147,7 +147,7 @@ export function DatePickerField({
           month: m,
           year: y,
           isCurrentMonth: false,
-          dateObj: new Date(y, m, i),
+          dateObj: new Date(y, m, i, 12, 0, 0),
         });
       }
     }
@@ -307,15 +307,16 @@ export function DatePickerField({
                 {/* Day of Week Labels */}
                 <View style={styles.dayLabelsRow}>
                   {DAY_LABELS.map((d, i) => (
-                    <Text
-                      key={d}
-                      style={[
-                        styles.dayLabelText,
-                        (i === 0 || i === 6) && styles.weekendLabel,
-                      ]}
-                    >
-                      {d}
-                    </Text>
+                    <View key={d} style={styles.dayCol}>
+                      <Text
+                        style={[
+                          styles.dayLabelText,
+                          (i === 0 || i === 6) && styles.weekendLabel,
+                        ]}
+                      >
+                        {d}
+                      </Text>
+                    </View>
                   ))}
                 </View>
 
@@ -327,29 +328,30 @@ export function DatePickerField({
                     const disabledDay = isDateDisabled(item.dateObj);
 
                     return (
-                      <Pressable
-                        key={index}
-                        style={[
-                          styles.dayCell,
-                          selected && styles.dayCellSelected,
-                          today && !selected && styles.dayCellToday,
-                          disabledDay && styles.dayCellDisabled,
-                        ]}
-                        disabled={disabledDay}
-                        onPress={() => selectDay(item.dateObj)}
-                      >
-                        <Text
+                      <View key={index} style={styles.dayCol}>
+                        <Pressable
                           style={[
-                            styles.dayCellText,
-                            !item.isCurrentMonth && styles.dayCellTextMuted,
-                            selected && styles.dayCellTextSelected,
-                            today && !selected && styles.dayCellTextToday,
-                            disabledDay && styles.dayCellTextDisabled,
+                            styles.dayCell,
+                            selected && styles.dayCellSelected,
+                            today && !selected && styles.dayCellToday,
+                            disabledDay && styles.dayCellDisabled,
                           ]}
+                          disabled={disabledDay}
+                          onPress={() => selectDay(item.dateObj)}
                         >
-                          {item.day}
-                        </Text>
-                      </Pressable>
+                          <Text
+                            style={[
+                              styles.dayCellText,
+                              !item.isCurrentMonth && styles.dayCellTextMuted,
+                              selected && styles.dayCellTextSelected,
+                              today && !selected && styles.dayCellTextToday,
+                              disabledDay && styles.dayCellTextDisabled,
+                            ]}
+                          >
+                            {item.day}
+                          </Text>
+                        </Pressable>
+                      </View>
                     );
                   })}
                 </View>
@@ -584,16 +586,21 @@ const styles = StyleSheet.create({
   },
   dayLabelsRow: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    paddingVertical: 6,
+    alignItems: "center",
+    paddingVertical: 8,
     backgroundColor: "#F8FAFC",
     borderRadius: radius.sm,
     marginBottom: 6,
   },
+  dayCol: {
+    width: "14.2857%", // Exactly 1/7th width for 7-day columns
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 2,
+  },
   dayLabelText: {
-    width: 36,
     textAlign: "center",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "800",
     color: "#64748B",
   },
@@ -603,7 +610,7 @@ const styles = StyleSheet.create({
   gridContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-around",
+    alignItems: "center",
   },
   dayCell: {
     width: 36,
@@ -611,7 +618,6 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    marginVertical: 2,
   },
   dayCellToday: {
     borderWidth: 1.5,

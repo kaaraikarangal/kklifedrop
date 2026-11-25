@@ -278,8 +278,15 @@ export default function Notifications() {
 
   const pendingItems = items.filter((n) => {
     const req = n.request || n.blood_requests || {};
-    const isClosed = req.status === "Fulfilled" || req.status === "Cancelled" || n.response === "Revoked - Request Fulfilled";
-    return !n.response && !isClosed;
+    const isClosed =
+      req.status === "Fulfilled" ||
+      req.status === "Cancelled" ||
+      n.response === "Revoked - Request Fulfilled" ||
+      n.response === "I Donated" ||
+      n.response === "Donated";
+    if (isClosed) return false;
+    // Both un-responded requests AND requests agreed to donate ("I Can Donate") that still need proof upload & fulfillment
+    return !n.response || n.response === "I Can Donate";
   });
   const displayedItems = activeFilter === "pending" ? pendingItems : items;
 
@@ -345,14 +352,14 @@ export default function Notifications() {
                   <Text style={styles.pendingCalloutBadgeText}>PENDING ACTION</Text>
                 </View>
                 <Text style={styles.pendingCalloutCount}>
-                  {pendingItems.length} Waiting for Decision
+                  {pendingItems.length} Waiting for Action
                 </Text>
               </View>
               <Text style={styles.pendingCalloutTitle}>
-                Missed or closed a notification?
+                Action Required on Blood Requests
               </Text>
               <Text style={styles.pendingCalloutDesc}>
-                Karaikal hospitals requested your blood group. Even if you swiped away the system alert, please choose whether you can donate or are unavailable so doctors can plan immediately.
+                Karaikal hospitals alerted you. Please respond whether you can donate, or if you already agreed, tap "Fulfill Blood Request" below to upload proof and complete your donation.
               </Text>
             </View>
           ) : null
@@ -392,15 +399,23 @@ export default function Notifications() {
           const units = req.units_required || 1;
           const urgency = req.urgency || "Normal";
           const isEmergency = urgency === "Emergency";
-          const isFulfilledOrRevoked = req.status === "Fulfilled" || n.response === "Revoked - Request Fulfilled";
-          const isPending = !n.response && !isFulfilledOrRevoked;
+          const isFulfilledOrRevoked =
+            req.status === "Fulfilled" ||
+            n.response === "Revoked - Request Fulfilled" ||
+            n.response === "I Donated" ||
+            n.response === "Donated";
+          const isAwaitingFulfill =
+            (n.response === "I Can Donate" || n.response === "Will Donate") && !isFulfilledOrRevoked;
+          const isPendingResponse = !n.response && !isFulfilledOrRevoked;
+          const isPending = (isPendingResponse || isAwaitingFulfill) && !isFulfilledOrRevoked;
           const isCurrentLoading = respondingId === n.id;
 
           return (
             <View
               style={[
                 styles.card,
-                isPending && styles.cardPending,
+                isPendingResponse && styles.cardPending,
+                isAwaitingFulfill && { borderColor: "#86EFAC", borderWidth: 1.5, backgroundColor: "#FFFFFF" },
                 isEmergency && !isFulfilledOrRevoked && styles.cardEmergency,
               ]}
               testID={`notif-${n.id}`}
@@ -426,10 +441,15 @@ export default function Notifications() {
                   <View style={[styles.respondedBadge, { backgroundColor: "#DCFCE7", borderWidth: 1, borderColor: "#86EFAC" }]}>
                     <Ionicons name="checkmark-done" size={13} color="#15803D" />
                     <Text style={[styles.respondedText, { color: "#15803D", fontWeight: "800" }]}>
-                      Blood Arranged
+                      {n.response === "I Donated" || n.response === "Donated" ? "Donated & Fulfilled" : "Blood Arranged"}
                     </Text>
                   </View>
-                ) : isPending ? (
+                ) : isAwaitingFulfill ? (
+                  <View style={[styles.pendingItemBadge, { backgroundColor: "#ECFDF5", borderColor: "#86EFAC" }]}>
+                    <View style={[styles.beaconDotSmall, { backgroundColor: "#10B981" }]} />
+                    <Text style={[styles.pendingItemBadgeText, { color: "#047857" }]}>PENDING PROOF</Text>
+                  </View>
+                ) : isPendingResponse ? (
                   <View style={styles.pendingItemBadge}>
                     <View style={styles.beaconDotSmall} />
                     <Text style={styles.pendingItemBadgeText}>ACTION REQUIRED</Text>
@@ -439,50 +459,24 @@ export default function Notifications() {
                     style={[
                       styles.respondedBadge,
                       {
-                        backgroundColor:
-                          n.response === "I Donated" || n.response === "Donated"
-                            ? "#D1FAE5"
-                            : n.response === "I Can Donate"
-                            ? "#DCFCE7"
-                            : "#F1F5F9",
+                        backgroundColor: "#F1F5F9",
                       },
                     ]}
                   >
                     <Ionicons
-                      name={
-                        n.response === "I Donated" || n.response === "Donated"
-                          ? "shield-checkmark"
-                          : n.response === "I Can Donate"
-                          ? "checkmark-circle"
-                          : "close-circle"
-                      }
+                      name="close-circle"
                       size={13}
-                      color={
-                        n.response === "I Donated" || n.response === "Donated"
-                          ? "#059669"
-                          : n.response === "I Can Donate"
-                          ? "#15803D"
-                          : "#64748B"
-                      }
+                      color="#64748B"
                     />
                     <Text
                       style={[
                         styles.respondedText,
                         {
-                          color:
-                            n.response === "I Donated" || n.response === "Donated"
-                              ? "#059669"
-                              : n.response === "I Can Donate"
-                              ? "#15803D"
-                              : "#475569",
+                          color: "#475569",
                         },
                       ]}
                     >
-                      {n.response === "I Donated" || n.response === "Donated"
-                        ? "Donated & Fulfilled"
-                        : n.response === "I Can Donate"
-                        ? "Will Donate"
-                        : "Unavailable"}
+                      Unavailable
                     </Text>
                   </View>
                 )}
@@ -535,48 +529,7 @@ export default function Notifications() {
                     </Pressable>
                   ) : null}
                 </View>
-              ) : isPending ? (
-                <View style={styles.actionsContainer}>
-                  <Text style={styles.decisionPromptText}>
-                    Can you donate blood for this patient?
-                  </Text>
-                  <View style={styles.actionsRow}>
-                    <Pressable
-                      testID={`notif-donate-${n.id}`}
-                      style={[styles.actionBtn, styles.donateBtn, isCurrentLoading && { opacity: 0.6 }]}
-                      disabled={isCurrentLoading}
-                      onPress={() => respond(n, "I Can Donate")}
-                    >
-                      <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
-                      <Text style={styles.donateBtnText}>I Can Donate</Text>
-                    </Pressable>
-
-                    <Pressable
-                      testID={`notif-decline-${n.id}`}
-                      style={[styles.actionBtn, styles.declineBtn, isCurrentLoading && { opacity: 0.6 }]}
-                      disabled={isCurrentLoading}
-                      onPress={() => respond(n, "Not Available")}
-                    >
-                      <Ionicons name="close-circle" size={16} color="#64748B" />
-                      <Text style={styles.declineBtnText}>Not Available</Text>
-                    </Pressable>
-                  </View>
-
-                  {req.request_number ? (
-                    <Pressable
-                      style={styles.detailsLink}
-                      onPress={() =>
-                        router.push({
-                          pathname: "/request-details",
-                          params: { id: req.request_number },
-                        })
-                      }
-                    >
-                      <Text style={styles.detailsLinkText}>View Full Patient & Hospital Details →</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              ) : n.response === "I Can Donate" ? (
+              ) : isAwaitingFulfill ? (
                 /* ========================================================================= */
                 /* DIRECT FULFILL CONNECT IN ALERTS (AFTER GIVING "I CAN DONATE") */
                 /* ========================================================================= */
@@ -624,6 +577,47 @@ export default function Notifications() {
                       </Pressable>
                     ) : null}
                   </View>
+                </View>
+              ) : isPendingResponse ? (
+                <View style={styles.actionsContainer}>
+                  <Text style={styles.decisionPromptText}>
+                    Can you donate blood for this patient?
+                  </Text>
+                  <View style={styles.actionsRow}>
+                    <Pressable
+                      testID={`notif-donate-${n.id}`}
+                      style={[styles.actionBtn, styles.donateBtn, isCurrentLoading && { opacity: 0.6 }]}
+                      disabled={isCurrentLoading}
+                      onPress={() => respond(n, "I Can Donate")}
+                    >
+                      <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
+                      <Text style={styles.donateBtnText}>I Can Donate</Text>
+                    </Pressable>
+
+                    <Pressable
+                      testID={`notif-decline-${n.id}`}
+                      style={[styles.actionBtn, styles.declineBtn, isCurrentLoading && { opacity: 0.6 }]}
+                      disabled={isCurrentLoading}
+                      onPress={() => respond(n, "Not Available")}
+                    >
+                      <Ionicons name="close-circle" size={16} color="#64748B" />
+                      <Text style={styles.declineBtnText}>Not Available</Text>
+                    </Pressable>
+                  </View>
+
+                  {req.request_number ? (
+                    <Pressable
+                      style={styles.detailsLink}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/request-details",
+                          params: { id: req.request_number },
+                        })
+                      }
+                    >
+                      <Text style={styles.detailsLinkText}>View Full Patient & Hospital Details →</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : n.response === "I Donated" || n.response === "Donated" ? (
                 /* ========================================================================= */

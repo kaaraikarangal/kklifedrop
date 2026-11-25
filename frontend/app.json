@@ -3,7 +3,7 @@
     "name": "KK Life Drop",
     "slug": "kaaraikarangal",
     "owner": "kaaraikarangal",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kklifedrop",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "org.kaaraikarangal.kklifedrop",
-      "buildNumber": "9"
+      "buildNumber": "10"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +19,7 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "org.kaaraikarangal.kklifedrop",
-      "versionCode": 9,
+      "versionCode": 10,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "INTERNET",
@@ -64,11 +64,15 @@
             "enableShrinkResourcesInReleaseBuilds": true,
             "enableProguardInReleaseBuilds": true,
             "enablePngCrunchInReleaseBuilds": true,
+            "useLegacyPackaging": true,
+            "enableBundleCompression": true,
             "buildArchs": [
               "arm64-v8a"
             ],
             "packagingOptions": {
               "exclude": [
+                "**/lib/x86/**",
+                "**/lib/x86_64/**",
                 "**/META-INF/DEPENDENCIES",
                 "**/META-INF/LICENSE",
                 "**/META-INF/LICENSE.txt",
@@ -80,7 +84,7 @@
                 "**/META-INF/*.kotlin_module"
               ]
             },
-            "extraProguardRules": "-assumenosideeffects class android.util.Log { public static boolean isLoggable(java.lang.String, int); public static int v(...); public static int d(...); }\n-dontwarn okio.**\n-dontwarn javax.annotation.**"
+            "extraProguardRules": "-assumenosideeffects class android.util.Log { public static boolean isLoggable(java.lang.String, int); public static int v(...); public static int d(...); public static int i(...); }\n-dontwarn okio.**\n-dontwarn javax.annotation.**"
           }
         }
       ]

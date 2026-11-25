@@ -61,7 +61,7 @@ export default function Home() {
   useFocusEffect(
     useCallback(() => {
       refreshPendingNotifications();
-      syncPushTokenWithBackend().catch(() => {});
+      syncPushTokenWithBackend().catch(() => { });
       if (Platform.OS === "android") {
         const onBackPress = () => {
           BackHandler.exitApp();
@@ -188,11 +188,11 @@ export default function Home() {
               </View>
               <Text style={styles.pendingTitle}>
                 {pendingCount === 1
-                  ? "1 Blood Request Needs Your Response"
-                  : `${pendingCount} Blood Requests Need Your Response`}
+                  ? "1 Blood Request Needs Your Action"
+                  : `${pendingCount} Blood Requests Need Your Action`}
               </Text>
               <Text style={styles.pendingDesc}>
-                Karaikal hospitals alerted you. Even if you closed the notification, tap to respond now.
+                Karaikal hospitals alerted you. Tap to respond or upload proof to fulfill your blood donation.
               </Text>
             </View>
             <View style={styles.pendingArrowBtn}>

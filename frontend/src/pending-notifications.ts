@@ -79,8 +79,17 @@ export async function refreshPendingNotifications(): Promise<{
     const readIdsList = await getReadNotificationIds();
     const readIds = new Set(readIdsList);
 
-    // Pending: requires donor action/response OR is unread (excluding any cancelled requests)
-    const pending = all.filter((n: any) => !n.response || !readIds.has(n.id));
+    // Pending: requires donor response OR agreed to donate & waiting for proof fulfillment ("I Can Donate") OR is unread
+    const pending = all.filter((n: any) => {
+      const reqStatus = n.request?.status || n.blood_requests?.status;
+      const isClosed =
+        reqStatus === "Fulfilled" ||
+        n.response === "Revoked - Request Fulfilled" ||
+        n.response === "I Donated" ||
+        n.response === "Donated";
+      if (isClosed) return false;
+      return !n.response || n.response === "I Can Donate" || !readIds.has(n.id);
+    });
 
     currentPendingCount = pending.length;
     pendingItemsCache = pending;
